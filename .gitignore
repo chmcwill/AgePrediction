@@ -4,6 +4,12 @@
 
 .venv/
 *.pyc
+# Elastic Beanstalk Files
+.elasticbeanstalk/*
+!.elasticbeanstalk/config.yml
+
+.venv/
+*.pyc
 __pycache__/
 instance/
 .webassets-cache
