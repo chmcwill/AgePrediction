@@ -17,7 +17,7 @@ instance/
 .env.*
 .pytest_cache/
 .coverage
-.platform/
+#.platform/
 htmlcov/
 migrations/
 *.sqlite3

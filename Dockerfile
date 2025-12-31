@@ -40,5 +40,5 @@ ENV FLASK_RUN_HOST=0.0.0.0
 ENV FLASK_ENV=production
 ENV FLASK_RUN_PORT=8080
 
-# Gunicorn options as environment variable for cleaner CMD
+# Gunicorn
 CMD ["gunicorn", "FlaskAgePred:app", "--bind=0.0.0.0:8080", "--workers=1", "--max-requests=100", "--max-requests-jitter=10"]
