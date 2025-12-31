@@ -4,12 +4,6 @@
 
 .venv/
 *.pyc
-# Elastic Beanstalk Files
-.elasticbeanstalk/*
-!.elasticbeanstalk/config.yml
-
-.venv/
-*.pyc
 __pycache__/
 instance/
 .webassets-cache
@@ -17,12 +11,11 @@ instance/
 .env.*
 .pytest_cache/
 .coverage
-#.platform/
 htmlcov/
 migrations/
 *.sqlite3
 .DS_Store
-
+*.tmp
 
 #data
 static/images/
