@@ -1,7 +1,8 @@
-def test_app_configured(app_module):
-    app = app_module.app
+def test_app_configured(app):
     assert app is not None
     assert app.config["UPLOAD_FOLDER"] == "static/images"
+    import age_prediction.app as app_module
+
     assert app.config["MAX_CONTENT_LENGTH"] == app_module.max_mb * 1024 * 1024
 
 
