@@ -1,0 +1,123 @@
+name: Deploy to EB (dev)
+
+on:
+  push:
+    branches:
+      - dev
+
+concurrency:
+  group: deploy-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPO_URI: ${{ vars.ECR_REPO_URI }}
+  EB_APP: ${{ vars.EB_APP }}
+  EB_ENV: ${{ vars.EB_ENV }}
+  EB_BUCKET: ${{ vars.EB_BUCKET }}
+  VERSION_LABEL: dev-${{ github.sha }}
+  ZIP_KEY: dev-${{ github.sha }}.zip
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required variables
+        run: |
+          for var in AWS_REGION ECR_REPO_URI EB_APP EB_ENV EB_BUCKET; do
+            if [ -z "${!var}" ]; then
+              echo "::error ::$var is not set. Add it as a repo variable."
+              exit 1
+            fi
+          done
+
+      - name: Configure AWS credentials (OIDC)
+        if: secrets.AWS_ROLE_TO_ASSUME != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure AWS credentials (access keys fallback)
+        if: secrets.AWS_ROLE_TO_ASSUME == ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        run: aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REPO_URI"
+
+      - name: Build Docker image
+        run: |
+          docker build -t "$ECR_REPO_URI:$VERSION_LABEL" -t "$ECR_REPO_URI:dev-latest" .
+
+      - name: Push Docker image
+        run: |
+          docker push "$ECR_REPO_URI:$VERSION_LABEL"
+          docker push "$ECR_REPO_URI:dev-latest"
+
+      - name: Template Dockerrun for this commit
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("Dockerrun.aws.json")
+          data = json.loads(path.read_text())
+          image = data.setdefault("Image", {})
+          image["Name"] = f"{os.environ['ECR_REPO_URI']}:{os.environ['VERSION_LABEL']}"
+          path.write_text(json.dumps(data, indent=2))
+          PY
+
+      - name: Package EB bundle
+        run: zip -r "$ZIP_KEY" Dockerrun.aws.json .platform .ebextensions
+
+      - name: Upload bundle to S3
+        run: aws s3 cp "$ZIP_KEY" "s3://$EB_BUCKET/$ZIP_KEY"
+
+      - name: Create EB application version
+        run: |
+          aws elasticbeanstalk create-application-version \
+            --application-name "$EB_APP" \
+            --version-label "$VERSION_LABEL" \
+            --source-bundle S3Bucket="$EB_BUCKET",S3Key="$ZIP_KEY" \
+            --process
+
+      - name: Deploy to Elastic Beanstalk (dev)
+        run: |
+          aws elasticbeanstalk update-environment \
+            --environment-name "$EB_ENV" \
+            --version-label "$VERSION_LABEL"
+          aws elasticbeanstalk wait environment-updated --environment-names "$EB_ENV"
+
+      - name: Check environment health
+        run: |
+          HEALTH=$(aws elasticbeanstalk describe-environments --environment-names "$EB_ENV" --query "Environments[0].Health" --output text)
+          STATUS=$(aws elasticbeanstalk describe-environments --environment-names "$EB_ENV" --query "Environments[0].Status" --output text)
+          echo "Environment status: $STATUS, health: $HEALTH"
+          if [ "$HEALTH" = "Red" ]; then
+            echo "::error ::Deployment completed but health is RED"
+            exit 1
+          fi
+
+      - name: Recent EB events (for visibility)
+        run: aws elasticbeanstalk describe-events --environment-name "$EB_ENV" --max-records 20 --query "Events[*].[EventDate,Severity,Message]" --output table
+
+      - name: Fetch EB logs on failure
+        if: failure()
+        run: |
+          aws elasticbeanstalk request-environment-info --environment-name "$EB_ENV" --info-type tail
+          sleep 10
+          aws elasticbeanstalk retrieve-environment-info --environment-name "$EB_ENV" --info-type tail --query "EnvironmentInfo[*].Message" --output text
+          aws elasticbeanstalk describe-events --environment-name "$EB_ENV" --max-records 20 --query "Events[*].[EventDate,Severity,Message]" --output table
