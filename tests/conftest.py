@@ -25,14 +25,14 @@ def app_module(monkeypatch):
     monkeypatch.setattr(FaceModels, "Ensemble_Model", lambda *a, **k: _DummyModel())
     monkeypatch.setattr(facenet_pytorch, "MTCNN", lambda *a, **k: _DummyModel())
 
-    sys.modules.pop("FlaskAgePred", None)
-    module = importlib.import_module("FlaskAgePred")
+    sys.modules.pop("age_prediction.app", None)
+    module = importlib.import_module("age_prediction.app")
     return module
 
 
 @pytest.fixture
 def app(app_module):
-    return app_module.app
+    return app_module.create_app()
 
 
 @pytest.fixture

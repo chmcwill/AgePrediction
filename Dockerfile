@@ -34,11 +34,11 @@ COPY . .
 # Expose port for Flask
 EXPOSE 8080
 
-# Set environment variables for Flask
-ENV FLASK_APP=FlaskAgePred.py
+# Set environment variables for Flask (use factory)
+ENV FLASK_APP=age_prediction.app
 ENV FLASK_RUN_HOST=0.0.0.0
 ENV FLASK_ENV=production
 ENV FLASK_RUN_PORT=8080
 
-# Gunicorn
-CMD ["gunicorn", "FlaskAgePred:app", "--bind=0.0.0.0:8080", "--workers=1", "--max-requests=100", "--max-requests-jitter=10"]
+# Gunicorn (load via factory)
+CMD ["gunicorn", "age_prediction.app:create_app()", "--bind=0.0.0.0:8080", "--workers=1", "--max-requests=100", "--max-requests-jitter=10"]
