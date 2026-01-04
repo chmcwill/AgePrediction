@@ -12,6 +12,11 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 from age_prediction.services.prediction import run_prediction
 from age_prediction.services import storage
+from age_prediction.services.errors import (
+    InvalidImageError,
+    NoFacesFoundError,
+    InferenceOOMError,
+)
 
 
 pillow_heif.register_heif_opener()
@@ -83,16 +88,18 @@ def create_app():
             explainsmall = False
             if 'uploaded_filename' in session:
                 uploaded_filename = session['uploaded_filename']
-                result = run_prediction(uploaded_filename, app.config['UPLOAD_FOLDER'])
-                if result.error:
-                    flash(result.error)
+                try:
+                    result, generated_files = run_prediction(uploaded_filename, app.config['UPLOAD_FOLDER'])
+                except InferenceOOMError:
+                    flash('OOM Error: Picture was too large to process on this server. Please upload a smaller image.')
+                    gc.collect()
+                    return redirect(url_for('home'))
+                except (InvalidImageError, NoFacesFoundError) as e:
+                    flash(f'Unable to use picture: {e}')
                     gc.collect()
                     return redirect(url_for('home'))
 
-                session['proc_images'] = []
-                if result.big_fig_path:
-                    session['proc_images'].append(result.big_fig_path)
-                session['proc_images'].extend(result.fig_paths)
+                session['proc_images'] = generated_files
                 explainsmall = result.explainsmall
                 plt_big = result.plt_big
                 fig_paths = result.fig_paths
