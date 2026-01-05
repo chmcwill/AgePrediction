@@ -1,5 +1,8 @@
 import importlib
+import os
 import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pytest
 
@@ -18,12 +21,11 @@ def app_module(monkeypatch):
     Load FlaskAgePred with heavy models stubbed so smoke tests stay fast and
     avoid large weight downloads.
     """
-    import FaceModels
-    import facenet_pytorch
+    import age_prediction.services.models as models
 
-    monkeypatch.setattr(FaceModels, "Facenet_Embeddor", lambda *a, **k: _DummyModel())
-    monkeypatch.setattr(FaceModels, "Ensemble_Model", lambda *a, **k: _DummyModel())
-    monkeypatch.setattr(facenet_pytorch, "MTCNN", lambda *a, **k: _DummyModel())
+    monkeypatch.setattr(models, "Facenet_Embeddor", lambda *a, **k: _DummyModel())
+    monkeypatch.setattr(models, "Ensemble_Model", lambda *a, **k: _DummyModel())
+    monkeypatch.setattr(models, "MTCNN", lambda *a, **k: _DummyModel())
 
     sys.modules.pop("age_prediction.app", None)
     module = importlib.import_module("age_prediction.app")

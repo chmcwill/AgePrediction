@@ -6,24 +6,30 @@ Structured for inference-only code paths.
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
-from PIL import Image, ImageOps
+from PIL import Image
 from torchvision.transforms import functional as TVF
 
-import FaceModels as fm
-import FacePlotting as fpl
-from FaceDatasets import box_add_margin, box_to_square
 from age_prediction.services.errors import (
     InferenceOOMError,
     InvalidImageError,
     NoFacesFoundError,
 )
-from age_prediction.services.models import get_runtime_models
+from age_prediction.services import plotting as fpl
+from age_prediction.services.models import get_runtime_models, predict_age
+from age_prediction.services.preprocessing import (
+    box_add_margin,
+    box_to_square,
+    face_to_tensor,
+    load_image,
+    resize_to_max_dim,
+    tensor_to_pil,
+)
 
 
 @dataclass
@@ -35,6 +41,7 @@ class PredictionConfig:
     min_face_size: int = 30  # minimum face box dimension (pixels) before filtering
     tight_layout: bool = True  # whether to call tight_layout on per-face plots
     detect_max_size: int = 1600  # max dimension for the detector (safe_detect)
+    classes: Iterable[int] = tuple(range(10, 71))  # age classes for classification
 
 
 @dataclass
@@ -80,39 +87,12 @@ class ImageContext:
 DEFAULT_PREDICTION_CONFIG = PredictionConfig()
 
 
-def load_image(image_path: str, config: PredictionConfig) -> Image.Image:
-    """
-    Load and resize image for inference. Returns an RGB PIL image.
-    """
-    try:
-        with Image.open(image_path) as img:
-            img = ImageOps.exif_transpose(img)
-            if img.mode != "RGB":
-                img = img.convert("RGB")
-
-            img, _ = _resize_to_max_dim(img, config.max_dim)
-            return img.copy()
-    except Exception as exc:
-        raise InvalidImageError(f"Unable to load image: {exc}") from exc
-
-
-def face_to_tensor(face_img: Image.Image) -> torch.Tensor:
-    """Convert PIL face image to normalized tensor in [-1, 1]."""
-    np_array = (np.asarray(face_img).astype(np.float32) - 127.5) / 128
-    return torch.as_tensor(np_array.transpose(2, 0, 1), dtype=torch.float32)
-
-
-def tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
-    """Convert normalized tensor back to PIL image for plotting."""
-    if torch.max(tensor) <= 1:
-        tensor = (tensor + 1) * (255 / 2)
-    array = tensor.squeeze().permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-    return Image.fromarray(array)
-
-
 def _image_to_context(image_path: str, config: PredictionConfig) -> ImageContext:
     """Load image and create a reusable context with tensor + metadata."""
-    image = load_image(image_path, config)
+    try:
+        image = load_image(image_path, config.max_dim)
+    except Exception as exc:
+        raise InvalidImageError(f"Unable to load image: {exc}") from exc
     tensor = face_to_tensor(image)
     return ImageContext(
         image=image,
@@ -152,7 +132,7 @@ def detect_faces(img_ctx: ImageContext, detector, config: PredictionConfig) -> L
 def safe_detect(detector, img: Image.Image, max_size: int = 1600):
     """Run detector on a resized copy if the image is very large, then scale boxes back."""
     with torch.no_grad():
-        img_resized, scale = _resize_to_max_dim(img, max_size)
+        img_resized, scale = resize_to_max_dim(img, max_size)
         if scale > 1:
             boxes, probs, landmarks = detector.detect(img_resized, landmarks=True)
             if boxes is not None:
@@ -161,16 +141,6 @@ def safe_detect(detector, img: Image.Image, max_size: int = 1600):
                 landmarks = landmarks * scale
             return boxes, probs, landmarks
         return detector.detect(img, landmarks=True)
-
-
-def _resize_to_max_dim(img: Image.Image, max_dim: int) -> Tuple[Image.Image, float]:
-    """Resize image so the largest dimension is <= max_dim; returns (image, scale_used)."""
-    w, h = img.size
-    scale = max(w, h) / max_dim
-    if scale > 1:
-        new_w, new_h = int(w / scale), int(h / scale)
-        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    return img, scale
 
 
 def _mark_filtered(face: FaceDetection, reason: FilterReason) -> None:
@@ -293,18 +263,17 @@ def _clamp_box(box: np.ndarray, img_w: int, img_h: int) -> np.ndarray:
     )
 
 
-def _build_overlay_payload(img_ctx: ImageContext) -> Tuple[List[np.ndarray], List[object]]:
-    """Build aligned bounds + preds/reasons for overlay plotting."""
-    bounds: List[np.ndarray] = []
-    preds: List[object] = []
+def _build_overlay_payload(img_ctx: ImageContext) -> List[fpl.OverlayItem]:
+    """Build overlay annotations with bounds and prediction/error labels."""
+    overlays: List[fpl.OverlayItem] = []
     for face in img_ctx.faces:
-        bounds.append(_clamp_box(face.box if face.box is not None else face.original_box, img_ctx.width, img_ctx.height))
         if face.status == "kept" and face.prediction is not None:
-            preds.append(face.prediction)
+            label = face.prediction
         else:
-            reason = face.reason.value if face.reason else FilterReason.NO_FACES_FOUND.value
-            preds.append(reason)
-    return bounds, preds
+            label = face.reason.value if face.reason else FilterReason.NO_FACES_FOUND.value
+        bounds = _clamp_box(face.box if face.box is not None else face.original_box, img_ctx.width, img_ctx.height)
+        overlays.append(fpl.OverlayItem(bounds=bounds, label=label))
+    return overlays
 
 
 def predict_faces(
@@ -336,24 +305,27 @@ def predict_faces(
                 raise InferenceOOMError("OOM during inference") from e
             raise
 
-        pred, output_softmax = fm.predict_age(output, classes=range(10, 71))
+        pred, output_softmax = predict_age(output, classes=config.classes)
         pred_array = np.atleast_1d(np.asarray(pred))
         face.prediction = pred_array
 
         fig = fpl.plot_image_and_pred(
-            face_image,
-            float(pred_array[0]),
-            CLASSIF=True,
-            output_softmax=output_softmax,
-            image_name=base_name,
+            fpl.FacePlotData(
+                image=face_image,
+                prediction=float(pred_array[0]),
+                output_softmax=output_softmax,
+                image_name=base_name,
+                img_input_size=config.resize_shape,
+                classification=True,
+            ),
             tight_layout=config.tight_layout,
             figshow=False,
         )
         face_image.close()
         figs.append(fig)
 
-    face_bounds, preds_overlay = _build_overlay_payload(img_ctx)
-    big_fig, _ = fpl.overlay_preds_on_img(img_ctx.image, face_bounds, preds_overlay)
+    overlays = _build_overlay_payload(img_ctx)
+    big_fig, _ = fpl.overlay_preds_on_img(img_ctx.image, overlays)
     return figs, big_fig
 
 
