@@ -25,25 +25,27 @@ pillow_heif.register_heif_opener()
 matplotlib.use('Agg')  # use the non gui backend
 
 # shouldnt store permanent data in session (like forever, so just like their name is ok)
-max_mb = 8
+MAX_CONTENT_LENGTH_MB = 8
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TEMPLATE_FOLDER = os.path.join(ROOT_DIR, "templates")
 STATIC_FOLDER = os.path.join(ROOT_DIR, "static")
+MAX_CONTENT_LENGTH_B = MAX_CONTENT_LENGTH_MB * 1024 * 1024  #converted to bytes
 DEFAULT_UPLOAD_MAX_AGE_SECONDS = 6 * 60 * 60  # 6 hours
 DEFAULT_UPLOAD_MAX_TOTAL_BYTES = None  # set to int bytes to enforce a cap
+UPLOAD_FOLDER_MAX_TOTAL_BYTES = 50 * 1024 * 1024  # keep upload folder under 50 MB
 
 
 def create_app():
     app = Flask(__name__, template_folder=TEMPLATE_FOLDER, static_folder=STATIC_FOLDER)
     app.secret_key = 'hello'
     app.config['UPLOAD_FOLDER'] = 'static/images'
-    app.config['MAX_CONTENT_LENGTH'] = max_mb * 1024 * 1024  # converted to bytes
+    app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH_B
     app.config['UPLOAD_MAX_AGE_SECONDS'] = DEFAULT_UPLOAD_MAX_AGE_SECONDS
-    app.config['UPLOAD_MAX_TOTAL_BYTES'] = DEFAULT_UPLOAD_MAX_TOTAL_BYTES  # optional cap
+    app.config['UPLOAD_MAX_TOTAL_BYTES'] = UPLOAD_FOLDER_MAX_TOTAL_BYTES
 
     @app.errorhandler(RequestEntityTooLarge)
     def handle_file_too_large(e):
-        flash(f"File is too large. Maximum allowed size is {max_mb} MB.")
+        flash(f"File is too large. Maximum allowed size is {MAX_CONTENT_LENGTH_MB} MB.")
         return redirect(url_for('home'))
 
     @app.errorhandler(404)
@@ -54,81 +56,86 @@ def create_app():
     def internal_error(error):
         return render_template('500.html'), 500
 
-    @app.route("/", methods=["POST", "GET"])
+    def _session_files():
+        """Collect current session file paths for cleanup."""
+        files = []
+        if uploaded := session.get('uploaded_filename'):
+            files.append(uploaded)
+        files.extend(session.get('proc_images', []))
+        return files
+
+    @app.route("/", methods=["GET"])
     def home():
-        if request.method == "POST":
-            # remove any previous data before writing
-            if 'uploaded_filename' in session:
-                session.pop('uploaded_filename', None)
-            uploaded_file = request.files.get("file")
-            try:
-                saved_path = storage.save_upload(uploaded_file, app.config['UPLOAD_FOLDER'])
-            except StorageError as exc:
-                flash(f"Image input unsuccessful: {exc}")
-                return render_template("inputpage.html")
+        exclude_paths = _session_files()
+        storage.cleanup_stale_files(
+            app.config['UPLOAD_FOLDER'],
+            app.config['UPLOAD_MAX_AGE_SECONDS'],
+            app.config.get('UPLOAD_MAX_TOTAL_BYTES'),
+            exclude=exclude_paths,
+        )
+        return render_template("inputpage.html")
 
-            session['uploaded_filename'] = saved_path
-            return redirect(url_for('resultspage'))
-        else:
-            # Opportunistic cleanup of stale uploads; exclude current session files.
-            exclude_paths = []
-            if 'uploaded_filename' in session:
-                exclude_paths.append(session['uploaded_filename'])
-            exclude_paths.extend(session.get('proc_images', []))
-            storage.cleanup_stale_files(
-                app.config['UPLOAD_FOLDER'],
-                app.config['UPLOAD_MAX_AGE_SECONDS'],
-                app.config.get('UPLOAD_MAX_TOTAL_BYTES'),
-                exclude=exclude_paths,
-            )
-            return render_template("inputpage.html")
+    @app.route("/", methods=["POST"])
+    def upload_image():
+        # Clear prior session state and files before handling a new upload
+        storage.cleanup_files(_session_files())
+        session.pop('uploaded_filename', None)
+        session.pop('proc_images', None)
 
-    @app.route("/resultspage", methods=["POST", "GET"])
+        uploaded_file = request.files.get("file")
+        if not uploaded_file or uploaded_file.filename == "":
+            flash("Please choose an image before submitting.")
+            return redirect(url_for('home'))
+
+        try:
+            saved_path = storage.save_upload(uploaded_file, app.config['UPLOAD_FOLDER'])
+        except StorageError as exc:
+            flash(f"Image input unsuccessful: {exc}")
+            return redirect(url_for('home'))
+
+        session['uploaded_filename'] = saved_path
+        return redirect(url_for('resultspage'))
+
+    @app.route("/resultspage", methods=["GET"], endpoint="resultspage")
     def resultspage():
-        if request.method == 'POST':
-            if request.form['submit_button'] == "Try Another Image!":
-                # delete the previous images
-                files_to_delete = [session.get('uploaded_filename')] + session.get('proc_images', [])
-                storage.cleanup_files(files_to_delete)
-                # also check if directory is super full from people just closing out
-                # so then we also delete all the files
-                folder_size = sum([os.path.getsize('static/images/' + file_loc)
-                                   for file_loc in os.listdir('static/images')])
-                if folder_size > 50 * 1024 * 1024:  # keep it under 50 mbytes
-                    for file_to_delete in os.listdir('static/images'):
-                        storage.cleanup_files(['static/images/' + file_to_delete])
-                return redirect(url_for('home'))
-            else:  # if not the button, then show results again, but if not button then how is it post,
-                    # so probably wont reach this tab
-                fig_path = app.config['UPLOAD_FOLDER'] + '/' + 'prediction.jpg'
-                return render_template("resultspage.html", figpath=fig_path)
-        else:
-            explainsmall = False
-            if 'uploaded_filename' in session:
-                uploaded_filename = session['uploaded_filename']
-                try:
-                    result, generated_files = run_prediction(uploaded_filename, app.config['UPLOAD_FOLDER'])
-                except InferenceOOMError:
-                    flash('OOM Error: Picture was too large to process on this server. Please upload a smaller image.')
-                    gc.collect()
-                    return redirect(url_for('home'))
-                except (InvalidImageError, NoFacesFoundError) as e:
-                    flash(f'Unable to use picture: {e}')
-                    gc.collect()
-                    return redirect(url_for('home'))
+        uploaded_filename = session.get('uploaded_filename')
+        if not uploaded_filename:
+            flash("You did not submit an image!")
+            return redirect(url_for('home'))
 
-                session['proc_images'] = generated_files
-                explainsmall = result.explainsmall
-                plt_big = result.plt_big
-                fig_paths = result.fig_paths
-                big_fig_path = result.big_fig_path
-                gc.collect()
-                return render_template("resultspage.html", figpath=fig_paths,
-                                       bigfigpath=big_fig_path, pltbig=plt_big,
-                                       explainsmall=explainsmall)
-            else:
-                flash("You did not submit an image!")
-                return redirect(url_for('home'))
+        try:
+            result, generated_files = run_prediction(uploaded_filename, app.config['UPLOAD_FOLDER'])
+        except InferenceOOMError:
+            flash('OOM Error: Picture was too large to process on this server. Please upload a smaller image.')
+            gc.collect()
+            return redirect(url_for('home'))
+        except (InvalidImageError, NoFacesFoundError) as e:
+            flash(f'Unable to use picture: {e}')
+            gc.collect()
+            return redirect(url_for('home'))
+
+        session['proc_images'] = generated_files
+        explainsmall = result.explainsmall
+        plt_big = result.plt_big
+        fig_paths = result.fig_paths
+        big_fig_path = result.big_fig_path
+        gc.collect()
+        return render_template("resultspage.html", figpath=fig_paths,
+                               bigfigpath=big_fig_path, pltbig=plt_big,
+                               explainsmall=explainsmall)
+
+    @app.route("/resultspage", methods=["POST"])
+    def reset_results():
+        storage.cleanup_files(_session_files())
+        session.pop('uploaded_filename', None)
+        session.pop('proc_images', None)
+        # Opportunistically prune the folder if it is over the configured cap.
+        storage.cleanup_stale_files(
+            app.config['UPLOAD_FOLDER'],
+            app.config['UPLOAD_MAX_AGE_SECONDS'],
+            app.config.get('UPLOAD_MAX_TOTAL_BYTES'),
+        )
+        return redirect(url_for('home'))
 
     return app
 
