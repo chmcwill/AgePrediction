@@ -18,3 +18,7 @@ class NoFacesFoundError(PredictionError):
 
 class InferenceOOMError(PredictionError):
     """Raised when inference fails due to an out-of-memory condition."""
+
+
+class StorageError(PredictionError):
+    """Raised when file upload/save fails validation or cannot be stored."""

@@ -12,7 +12,7 @@ class _DummyModel:
         return self
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def app_module(monkeypatch):
     """
     Load FlaskAgePred with heavy models stubbed so smoke tests stay fast and
