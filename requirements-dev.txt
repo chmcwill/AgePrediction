@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# Testing
+pytest==9.0.2
+
+# Linting (ruff preferred; replace with flake8 if you already use it)
+ruff==0.8.4

@@ -16,6 +16,7 @@ from age_prediction.services.errors import (
     InvalidImageError,
     NoFacesFoundError,
     InferenceOOMError,
+    StorageError,
 )
 
 
@@ -25,13 +26,20 @@ matplotlib.use('Agg')  # use the non gui backend
 
 # shouldnt store permanent data in session (like forever, so just like their name is ok)
 max_mb = 8
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+TEMPLATE_FOLDER = os.path.join(ROOT_DIR, "templates")
+STATIC_FOLDER = os.path.join(ROOT_DIR, "static")
+DEFAULT_UPLOAD_MAX_AGE_SECONDS = 6 * 60 * 60  # 6 hours
+DEFAULT_UPLOAD_MAX_TOTAL_BYTES = None  # set to int bytes to enforce a cap
 
 
 def create_app():
-    app = Flask(__name__)
+    app = Flask(__name__, template_folder=TEMPLATE_FOLDER, static_folder=STATIC_FOLDER)
     app.secret_key = 'hello'
     app.config['UPLOAD_FOLDER'] = 'static/images'
     app.config['MAX_CONTENT_LENGTH'] = max_mb * 1024 * 1024  # converted to bytes
+    app.config['UPLOAD_MAX_AGE_SECONDS'] = DEFAULT_UPLOAD_MAX_AGE_SECONDS
+    app.config['UPLOAD_MAX_TOTAL_BYTES'] = DEFAULT_UPLOAD_MAX_TOTAL_BYTES  # optional cap
 
     @app.errorhandler(RequestEntityTooLarge)
     def handle_file_too_large(e):
@@ -52,17 +60,27 @@ def create_app():
             # remove any previous data before writing
             if 'uploaded_filename' in session:
                 session.pop('uploaded_filename', None)
-            uploaded_file = request.files["file"]
-            if uploaded_file.filename != '':
+            uploaded_file = request.files.get("file")
+            try:
                 saved_path = storage.save_upload(uploaded_file, app.config['UPLOAD_FOLDER'])
-                session['uploaded_filename'] = saved_path
-                # flash("Image Submission Successful!")
-                gc.collect()
-                return redirect(url_for('resultspage'))
-            else:
-                flash("Image input unsuccesful")
+            except StorageError as exc:
+                flash(f"Image input unsuccessful: {exc}")
                 return render_template("inputpage.html")
+
+            session['uploaded_filename'] = saved_path
+            return redirect(url_for('resultspage'))
         else:
+            # Opportunistic cleanup of stale uploads; exclude current session files.
+            exclude_paths = []
+            if 'uploaded_filename' in session:
+                exclude_paths.append(session['uploaded_filename'])
+            exclude_paths.extend(session.get('proc_images', []))
+            storage.cleanup_stale_files(
+                app.config['UPLOAD_FOLDER'],
+                app.config['UPLOAD_MAX_AGE_SECONDS'],
+                app.config.get('UPLOAD_MAX_TOTAL_BYTES'),
+                exclude=exclude_paths,
+            )
             return render_template("inputpage.html")
 
     @app.route("/resultspage", methods=["POST", "GET"])
