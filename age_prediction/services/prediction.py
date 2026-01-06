@@ -6,7 +6,7 @@ Structured for inference-only code paths.
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,6 +34,8 @@ from age_prediction.services.preprocessing import (
 
 @dataclass
 class PredictionConfig:
+    age_min: int = 10  # minimum age represented by the classifier
+    age_max: int = 70  # maximum age represented by the classifier
     max_dim: int = 2048  # max dimension for the loaded image used for inference/cropping
     margin: int = 20  # percent margin to add around a squared face box
     resize_shape: int = 160  # model input size for cropped faces
@@ -41,7 +43,13 @@ class PredictionConfig:
     min_face_size: int = 30  # minimum face box dimension (pixels) before filtering
     tight_layout: bool = True  # whether to call tight_layout on per-face plots
     detect_max_size: int = 1600  # max dimension for the detector (safe_detect)
-    classes: Iterable[int] = tuple(range(10, 71))  # age classes for classification
+    def __post_init__(self):
+        if self.age_min > self.age_max:
+            raise ValueError("age_min must be <= age_max")
+
+    @property
+    def classes(self) -> Tuple[int, ...]:
+        return tuple(range(self.age_min, self.age_max + 1))
 
 
 @dataclass
@@ -317,6 +325,8 @@ def predict_faces(
                 image_name=base_name,
                 img_input_size=config.resize_shape,
                 classification=True,
+                age_min=config.age_min,
+                age_max=config.age_max,
             ),
             tight_layout=config.tight_layout,
             figshow=False,
@@ -371,7 +381,7 @@ def render_figures(figlist, big_fig, upload_dir, base_filename):
 
 def run_prediction(image_path, upload_dir, config: PredictionConfig = DEFAULT_PREDICTION_CONFIG):
     """Orchestrate the prediction workflow and save outputs."""
-    detector, embeddor, model, device = get_runtime_models()
+    detector, embeddor, model, device = get_runtime_models(tuple(config.classes), config.min_face_size)
 
     img_ctx = _image_to_context(image_path, config)
     try:

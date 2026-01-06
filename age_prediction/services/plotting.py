@@ -29,6 +29,8 @@ class FacePlotData:
     image_name: str = "input image"
     img_input_size: int = 160
     classification: bool = True
+    age_min: int = 10
+    age_max: int = 70
 
 
 @dataclass
@@ -72,6 +74,7 @@ def plot_image_and_pred(
     Plot a cropped face alongside its predicted age or probability distribution.
     """
     image_arr = _prepare_face_image(data.image, data.img_input_size)
+    pred_display = f"{data.prediction:.1f}"
 
     if fig_ax is None:
         fig, axs = plt.subplots(1, 2, figsize=(10, 5))
@@ -85,19 +88,20 @@ def plot_image_and_pred(
     if data.classification:
         if data.output_softmax is None:
             raise ValueError("output_softmax is required when classification=True")
-        fig.suptitle(f"Age Prediction using Classification for {data.image_name}", fontsize=16)
-        axs[1].plot(range(10, 71), data.output_softmax.squeeze())
+        fig.suptitle(f"Age Prediction using Classification", fontsize=16)
+        age_axis = range(data.age_min, data.age_max + 1)
+        axs[1].plot(age_axis, data.output_softmax.squeeze())
         axs[1].set_xlabel("Age", fontsize=12)
         axs[1].set_ylabel("Probability", fontsize=12)
-        axs[1].set_title(f"Age Prediction Distribution (pred = {data.prediction})", fontsize=13)
+        axs[1].set_title(f"Age Prediction Distribution (pred = {pred_display})", fontsize=13)
         axs[1].plot([data.prediction] * 2, [0, np.max(data.output_softmax)], linewidth=2)
         axs[1].legend(["PDF", "Expectation"], loc="upper right")
     else:
-        fig.suptitle(f"Age Prediction using Regression for {data.image_name}")
+        fig.suptitle(f"Age Prediction using Regression")
         axs[1].set_xlabel("Age")
-        axs[1].set_title(f"Age Prediction (pred = {data.prediction})")
+        axs[1].set_title(f"Age Prediction (pred = {pred_display})")
         axs[1].plot([data.prediction] * 2, [0, 1], linewidth=2)
-        axs[1].set_xlim([10, 70])
+        axs[1].set_xlim([data.age_min, data.age_max])
 
     if tight_layout:
         plt.tight_layout()
@@ -124,7 +128,7 @@ def overlay_preds_on_img(image: Image.Image, overlays: Sequence[OverlayItem]):
     fig, ax = plt.subplots(1, 1, figsize=(plt_w, plt_h))
 
     ax.imshow(image)
-    ax.set_title("Total Image with Annotated Predictions", fontsize=20, pad=20)
+    ax.set_title("Full Image with Annotated Predictions", fontsize=20, pad=20)
 
     preds_error = [item.label for item in overlays if isinstance(item.label, str)]
     preds_tensor = [item.label for item in overlays if not isinstance(item.label, str)]
@@ -151,7 +155,9 @@ def overlay_preds_on_img(image: Image.Image, overlays: Sequence[OverlayItem]):
             txt_size = 9
             h_offset = 0.75
         else:
-            pred = f"Age: {pred[0]}" if n_faces <= 3 else str(pred[0])
+            pred_val = float(np.ravel(pred)[0])
+            pred_text = f"{pred_val:.1f}"
+            pred = f"Age: {pred_text}" if n_faces <= 3 else pred_text
             txt_size = 20 if n_faces <= 2 else 18 if n_faces <= 5 else 15 if n_faces <= 8 else 12
             h_offset = 0.4
 

@@ -23,7 +23,7 @@ def _load_state_dict(filename: str, device: torch.device) -> dict:
     return torch.load(path, map_location=device)
 
 
-def predict_age(model_out: torch.Tensor, classes: Iterable[int] = range(10, 71), thresh: float = 0.015) -> Tuple[np.ndarray, np.ndarray]:
+def predict_age(model_out: torch.Tensor, classes: Iterable[int], thresh: float = 0.015) -> Tuple[np.ndarray, np.ndarray]:
     """
     Expectation over class probabilities to estimate age.
     """
@@ -55,6 +55,8 @@ class Facenet_Embeddor(torch.nn.Module):
         self.embed_1792 = nn.Sequential(*features_list[:-4]).requires_grad_(False)
 
     def forward_1792(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() == 3:
+            x = x.unsqueeze(0)
         x = self.embed_1792(x)
         return x.view(x.shape[0], -1)
 
@@ -101,16 +103,17 @@ class Ensemble_Model(nn.Module):
     Simple ensemble that averages logits from a list of pre-trained FC heads.
     """
 
-    def __init__(self, model_list=None, device: torch.device | None = None):
+    def __init__(self, classes: Iterable[int], model_list=None, device: torch.device | None = None):
         super().__init__()
         self.name = "Ensemble_Model"
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.device = device
+        classes_tuple = tuple(classes)
 
         if model_list is None:
             # Prefer loading weights into a known architecture to avoid pickled modules.
-            num_outputs = len(range(10, 71))
+            num_outputs = len(classes_tuple)
             weight_files = [
                 "FC_model_1792_classif_weights_agepred_bestval_personal_mae_5.406_bias_younger_Nov-04-2020.pt",
                 "FC_model_1792_classif_weights_agepred_bestval_personal_mae_5.266_bias_balanced_Nov-10-2020.pt",
@@ -133,12 +136,13 @@ class Ensemble_Model(nn.Module):
 
 
 @lru_cache(maxsize=1)
-def get_runtime_models():
+def get_runtime_models(classes: Tuple[int, ...], min_face_size: int):
     """
-    Lazily initialize and cache detector/embeddor/model for inference.
+    Lazily initialize and cache detector/embeddor/model for inference keyed by age classes
+    and detector min face size.
     """
     device = torch.device("cpu")
-    detector = MTCNN(min_face_size=30, device=device)
+    detector = MTCNN(min_face_size=min_face_size, device=device)
     embeddor = Facenet_Embeddor(device=device).eval().to(device)
-    model = Ensemble_Model(device=device).eval().to(device)
+    model = Ensemble_Model(classes=classes, device=device).eval().to(device)
     return detector, embeddor, model, device
