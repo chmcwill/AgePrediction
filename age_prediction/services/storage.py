@@ -13,6 +13,10 @@ from age_prediction.services.errors import StorageError
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp"}
 ALLOWED_MIME_PREFIXES = ("image/",)
+# Some clients (notably for HEIC/HEIF) report the content type as a generic octet-stream.
+# We still want to allow those when the extension is image-like, while rejecting other binaries.
+GENERIC_IMAGE_MIMETYPES = {"application/octet-stream"}
+GENERIC_MIME_EXTENSIONS = {".heic", ".heif"}
 
 
 def _validate_upload(uploaded_file) -> None:
@@ -25,12 +29,15 @@ def _validate_upload(uploaded_file) -> None:
         raise StorageError("No filename provided")
 
     _, ext = os.path.splitext(original_name)
-    if ext.lower() not in ALLOWED_EXTENSIONS:
+    ext = ext.lower()
+    if ext not in ALLOWED_EXTENSIONS:
         raise StorageError(f"Unsupported file type: {ext or 'unknown'}")
 
-    mimetype = getattr(uploaded_file, "mimetype", "") or ""
+    mimetype = (getattr(uploaded_file, "mimetype", "") or "").lower()
     if not any(mimetype.startswith(prefix) for prefix in ALLOWED_MIME_PREFIXES):
-        raise StorageError("Uploaded file is not a recognized image type")
+        # Allow HEIC/HEIF uploaded as generic octet-stream, otherwise reject non-image types.
+        if not (mimetype in GENERIC_IMAGE_MIMETYPES and ext in GENERIC_MIME_EXTENSIONS):
+            raise StorageError("Uploaded file is not a recognized image type")
 
 
 def _build_destination(upload_dir: str, filename: str) -> str:

@@ -3,7 +3,7 @@
 Compatibility shim that exposes the Flask app via the new factory.
 """
 
-from age_prediction.app import create_app, max_mb  # noqa: F401
+from age_prediction.app import create_app  # noqa: F401
 
 app = create_app()
 
