@@ -20,6 +20,8 @@ sam deploy
 ```
 
 Defaults live in `samconfig.toml` (edit there if you want to change values).
+If this is your first deploy, run:
+`sam deploy --guided --resolve-image-repos`
 
 ## Get Stack Outputs
 ```bash
