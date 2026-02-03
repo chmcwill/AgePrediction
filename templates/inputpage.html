@@ -9,7 +9,7 @@
         <form action="#" method="post" enctype="multipart/form-data" id="uploadForm">
             <h3 class = "center_p">Input an Image:</h3>
             <p>Images with one or more front facing faces in them will work.</p>
-            <p><input type="file" name="file" accept="image/*"></p>
+            <p><input type="file" name="file" id="fileInput" accept="image/*"></p>
             {% with messages = get_flashed_messages() %}
                 {% if messages %}
                     {% for msg in messages %}
@@ -17,6 +17,7 @@
                     {% endfor %}
                 {% endif %}
             {% endwith %}
+            <p id="statusMessage" style="color:#222; font-weight:bold"></p>
             <p>
                 <input type="submit" name="submit" id="submitBtn"/>
                 <span id="loadingSpinner" style="display:none; margin-left:10px;">
@@ -25,16 +26,16 @@
                 </span>
             </p>
         </form>
-        <script>
-        document.getElementById('uploadForm').addEventListener('submit', function(e) {
-            var submitBtn = document.getElementById('submitBtn');
-            var spinner = document.getElementById('loadingSpinner');
-            submitBtn.style.display = 'none';
-            spinner.style.display = 'inline-block';
-        });
-        </script>
     </div>
 </div>
+
+<div id="resultsSection" style="display:none;">
+    <h2 class = "title">Results</h2>
+    <div id="resultImages"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/heic2any/dist/heic2any.min.js"></script>
+<script src="{{ url_for('static', filename='js/upload.js') }}"></script>
 
 <h3 class = "title">How does this work?</h3>
 <p class = "left_p">I have trained a Convolutional Neural Network (CNN) on a cleaned version 

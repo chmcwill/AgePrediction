@@ -1,0 +1,28 @@
+FROM public.ecr.aws/lambda/python:3.11 AS python-build
+
+COPY requirements.txt ./
+COPY requirements-lambda.txt ./
+
+# Build Python dependencies in a stage with compilers available.
+RUN (dnf install -y gcc gcc-c++ make \
+    || yum install -y gcc gcc-c++ make) \
+    && pip install --no-cache-dir --only-binary=:all: -r requirements-lambda.txt \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir awsgi==0.0.5 \
+    && (dnf clean all || yum clean all)
+
+FROM public.ecr.aws/lambda/python:3.11
+
+# Copy installed Python packages from the build stage.
+COPY --from=python-build /var/lang/lib/python3.11/site-packages/ /var/lang/lib/python3.11/site-packages/
+
+WORKDIR /var/task
+
+COPY age_prediction ./age_prediction
+COPY best_models ./best_models
+COPY lambda_handler.py ./
+
+# Matplotlib cache in /tmp for Lambda (Lambda filesystem is ephemeral).
+ENV MPLCONFIGDIR=/tmp/matplotlib
+
+CMD ["lambda_handler.handler"]
