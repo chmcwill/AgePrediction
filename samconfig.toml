@@ -1,6 +1,10 @@
 version = 0.1
 
 [default]
+
+[default.global.parameters]
+region = "us-east-2"
+
 [default.deploy]
 [default.deploy.parameters]
 stack_name = "agepred-serverless"
@@ -9,6 +13,8 @@ capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 resolve_s3 = true
 resolve_image_repos = true
+s3_prefix = "agepred-serverless"
+disable_rollback = true
 
 parameter_overrides = [
   "BucketPrefix=agepred",
