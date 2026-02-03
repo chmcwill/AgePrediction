@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Serverless stack for AgePrediction (S3 + Lambda).
+
+Parameters:
+  BucketPrefix:
+    Type: String
+    Default: agepred
+  FunctionMemorySize:
+    Type: Number
+    Default: 2048
+  FunctionTimeout:
+    Type: Number
+    Default: 60
+  PresignExpireSeconds:
+    Type: Number
+    Default: 600
+  ResultUrlExpireSeconds:
+    Type: Number
+    Default: 3600
+  CorsAllowOrigin:
+    Type: String
+    Default: "*"
+  CreateCloudFront:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+
+Conditions:
+  UseCloudFront: !Equals [!Ref CreateCloudFront, "true"]
+
+Resources:
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${BucketPrefix}-frontend-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  UploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${BucketPrefix}-uploads-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  ResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${BucketPrefix}-results-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireResultsAfterOneDay
+            Status: Enabled
+            Prefix: results/
+            ExpirationInDays: 1
+
+  PredictFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: predict_age
+      PackageType: Image
+      MemorySize: !Ref FunctionMemorySize
+      Timeout: !Ref FunctionTimeout
+      Environment:
+        Variables:
+          S3_UPLOAD_BUCKET: !Ref UploadBucket
+          S3_RESULTS_BUCKET: !Ref ResultsBucket
+          S3_REGION: !Ref AWS::Region
+          S3_PRESIGN_EXPIRES_SECONDS: !Ref PresignExpireSeconds
+          S3_RESULT_URL_EXPIRES_SECONDS: !Ref ResultUrlExpireSeconds
+          CORS_ALLOW_ORIGIN: !Ref CorsAllowOrigin
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref UploadBucket
+        - S3CrudPolicy:
+            BucketName: !Ref ResultsBucket
+    Metadata:
+      Dockerfile: Dockerfile.lambda
+      DockerContext: .
+      DockerTag: latest
+
+  PredictFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      AuthType: NONE
+      TargetFunctionArn: !GetAtt PredictFunction.Arn
+      Cors:
+        AllowOrigins:
+          - !Ref CorsAllowOrigin
+        AllowMethods:
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+
+  PredictFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PredictFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  FrontendOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Condition: UseCloudFront
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${BucketPrefix}-frontend-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: UseCloudFront
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: FrontendOrigin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            S3OriginConfig: {}
+            OriginAccessControlId: !Ref FrontendOriginAccessControl
+        DefaultCacheBehavior:
+          TargetOriginId: FrontendOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          ForwardedValues:
+            QueryString: false
+          Compress: true
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: UseCloudFront
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipalReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
+
+Outputs:
+  UploadBucketName:
+    Value: !Ref UploadBucket
+  ResultsBucketName:
+    Value: !Ref ResultsBucket
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
+  PredictFunctionUrl:
+    Value: !GetAtt PredictFunctionUrl.FunctionUrl
+  FrontendDistributionDomainName:
+    Condition: UseCloudFront
+    Value: !GetAtt FrontendDistribution.DomainName

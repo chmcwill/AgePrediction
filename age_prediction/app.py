@@ -3,15 +3,21 @@
 Flask application entrypoint and factory for the age prediction demo.
 """
 
-from flask import Flask, redirect, url_for, render_template, request, session, flash
+from flask import Flask, redirect, url_for, render_template, request, session, flash, jsonify
 import os
 import gc
+import tempfile
+import uuid
 import matplotlib
-import pillow_heif
+try:
+    import pillow_heif
+except ImportError:
+    pillow_heif = None
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from age_prediction.services.prediction import run_prediction
 from age_prediction.services import storage
+from age_prediction.services import s3_storage
 from age_prediction.services.errors import (
     InvalidImageError,
     NoFacesFoundError,
@@ -20,12 +26,14 @@ from age_prediction.services.errors import (
 )
 
 
-pillow_heif.register_heif_opener()
+if pillow_heif is not None:
+    pillow_heif.register_heif_opener()
 
 matplotlib.use('Agg')  # use the non gui backend
 
 # shouldnt store permanent data in session (like forever, so just like their name is ok)
-MAX_CONTENT_LENGTH_MB = 8
+MAX_CONTENT_LENGTH_MB = 10
+max_mb = MAX_CONTENT_LENGTH_MB
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TEMPLATE_FOLDER = os.path.join(ROOT_DIR, "templates")
 STATIC_FOLDER = os.path.join(ROOT_DIR, "static")
@@ -42,30 +50,77 @@ def create_app():
     app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH_B
     app.config['UPLOAD_MAX_AGE_SECONDS'] = DEFAULT_UPLOAD_MAX_AGE_SECONDS
     app.config['UPLOAD_MAX_TOTAL_BYTES'] = UPLOAD_FOLDER_MAX_TOTAL_BYTES
+    # API_BASE_URL is injected into the static frontend for the JS client.
+    app.config['API_BASE_URL'] = os.environ.get("API_BASE_URL", "")
+    app.config['S3_REGION'] = os.environ.get("S3_REGION", "us-east-2")
+    app.config['S3_UPLOAD_BUCKET'] = os.environ.get("S3_UPLOAD_BUCKET")
+    app.config['S3_RESULTS_BUCKET'] = os.environ.get("S3_RESULTS_BUCKET")
+    app.config['S3_PRESIGN_EXPIRES_SECONDS'] = int(os.environ.get("S3_PRESIGN_EXPIRES_SECONDS", "600"))
+    app.config['S3_RESULT_URL_EXPIRES_SECONDS'] = int(os.environ.get("S3_RESULT_URL_EXPIRES_SECONDS", "3600"))
+    # Allow browser JS to call the API when served from a static bucket/CloudFront.
+    app.config['CORS_ALLOW_ORIGIN'] = os.environ.get("CORS_ALLOW_ORIGIN", "*")
 
     @app.errorhandler(RequestEntityTooLarge)
     def handle_file_too_large(e):
+        """Handle oversized uploads (input: error; output: redirect response)."""
         flash(f"File is too large. Maximum allowed size is {MAX_CONTENT_LENGTH_MB} MB.")
         return redirect(url_for('home'))
 
     @app.errorhandler(404)
     def not_found_error(error):
+        """Render the 404 page (input: error; output: HTML response + status)."""
         return render_template('404.html'), 404
 
     @app.errorhandler(500)
     def internal_error(error):
+        """Render the 500 page (input: error; output: HTML response + status)."""
         return render_template('500.html'), 500
 
     def _session_files():
-        """Collect current session file paths for cleanup."""
+        """Collect current session file paths (input: session; output: list of paths)."""
         files = []
         if uploaded := session.get('uploaded_filename'):
             files.append(uploaded)
         files.extend(session.get('proc_images', []))
         return files
 
+    @app.context_processor
+    def inject_api_base():
+        """Expose API base URL to templates (input: none; output: context dict)."""
+        # Expose API base URL to templates; static index.html uses the JS global.
+        return {"api_base_url": app.config.get("API_BASE_URL", "")}
+
+    def _require_s3_config():
+        """Validate S3 env vars (input: app config; output: error response or None)."""
+        # Fail fast if the function isn't wired to S3 buckets.
+        missing = []
+        if not app.config.get("S3_UPLOAD_BUCKET"):
+            missing.append("S3_UPLOAD_BUCKET")
+        if not app.config.get("S3_RESULTS_BUCKET"):
+            missing.append("S3_RESULTS_BUCKET")
+        if missing:
+            return jsonify({"error": "s3_config_missing", "missing": missing}), 500
+        return None
+
+    @app.after_request
+    def add_cors_headers(response):
+        """Add CORS headers (input: response; output: response)."""
+        # CORS is only needed for API routes called by the static frontend.
+        if request.path.startswith("/api/"):
+            response.headers["Access-Control-Allow-Origin"] = app.config["CORS_ALLOW_ORIGIN"]
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+            response.headers["Access-Control-Allow-Methods"] = "POST,OPTIONS"
+        return response
+
+    @app.route("/api/<path:unused>", methods=["OPTIONS"])
+    def api_options(unused):
+        """Return preflight response (input: any path; output: empty 204)."""
+        # Preflight response for browsers.
+        return ("", 204)
+
     @app.route("/", methods=["GET"])
     def home():
+        """Render the upload page (input: session for cleanup; output: HTML response)."""
         exclude_paths = _session_files()
         storage.cleanup_stale_files(
             app.config['UPLOAD_FOLDER'],
@@ -77,6 +132,10 @@ def create_app():
 
     @app.route("/", methods=["POST"])
     def upload_image():
+        """
+        Handle the upload form (input: multipart file; output: redirect response).
+        Saves the file locally, stores the path in session, then redirects to results.
+        """
         # Clear prior session state and files before handling a new upload
         storage.cleanup_files(_session_files())
         session.pop('uploaded_filename', None)
@@ -98,6 +157,10 @@ def create_app():
 
     @app.route("/resultspage", methods=["GET"], endpoint="resultspage")
     def resultspage():
+        """
+        Run inference and render results (input: session image path; output: HTML).
+        Reads the uploaded file path from session, runs prediction, then renders plots.
+        """
         uploaded_filename = session.get('uploaded_filename')
         if not uploaded_filename:
             flash("You did not submit an image!")
@@ -126,6 +189,10 @@ def create_app():
 
     @app.route("/resultspage", methods=["POST"])
     def reset_results():
+        """
+        Clear prior results (input: session; output: redirect response).
+        Removes generated files and resets session state to start a new upload.
+        """
         storage.cleanup_files(_session_files())
         session.pop('uploaded_filename', None)
         session.pop('proc_images', None)
@@ -136,6 +203,122 @@ def create_app():
             app.config.get('UPLOAD_MAX_TOTAL_BYTES'),
         )
         return redirect(url_for('home'))
+
+    @app.route("/api/presign", methods=["POST"])
+    def presign_upload():
+        """Create presigned PUT URL (input: JSON filename/content_type; output: JSON)."""
+        # Returns a presigned URL so the browser uploads directly to S3.
+        if (err := _require_s3_config()) is not None:
+            return err
+
+        payload = request.get_json(silent=True) or {}
+        filename = payload.get("filename", "")
+        content_type = payload.get("content_type") or "application/octet-stream"
+        if not filename:
+            return jsonify({"error": "filename_required"}), 400
+
+        key = s3_storage.build_upload_key(filename)
+        url = s3_storage.generate_presigned_put_url(
+            bucket=app.config["S3_UPLOAD_BUCKET"],
+            key=key,
+            content_type=content_type,
+            expires_in=app.config["S3_PRESIGN_EXPIRES_SECONDS"],
+            region=app.config.get("S3_REGION"),
+        )
+        return jsonify(
+            {
+                "url": url,
+                "key": key,
+                "expires_in": app.config["S3_PRESIGN_EXPIRES_SECONDS"],
+            }
+        )
+
+    @app.route("/api/predict", methods=["POST"])
+    def predict_from_s3():
+        """Run inference on S3 upload (input: JSON key/request_id; output: JSON URLs)."""
+        # Pulls the uploaded image from S3, runs inference, pushes results back to S3.
+        if (err := _require_s3_config()) is not None:
+            return err
+
+        payload = request.get_json(silent=True) or {}
+        key = payload.get("key")
+        if not key:
+            return jsonify({"error": "key_required"}), 400
+        if not str(key).startswith("uploads/"):
+            return jsonify({"error": "invalid_key", "message": "Key must start with uploads/."}), 400
+
+        # request_id scopes result object keys; caller can reuse for grouping.
+        request_id = payload.get("request_id") or uuid.uuid4().hex
+        suffix = os.path.splitext(key)[1] or ".jpg"
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="agepred_") as tmpdir:
+                # Lambda provides /tmp for scratch work; all outputs are uploaded to S3.
+                local_image = os.path.join(tmpdir, f"upload{suffix}")
+                s3_storage.download_to_path(
+                    bucket=app.config["S3_UPLOAD_BUCKET"],
+                    key=key,
+                    path=local_image,
+                    region=app.config.get("S3_REGION"),
+                )
+                result, generated_files = run_prediction(local_image, tmpdir)
+
+                prefix = s3_storage.build_results_prefix(request_id)
+                uploaded_map = {}
+                for path in generated_files:
+                    filename = os.path.basename(path)
+                    object_key = f"{prefix}/{filename}"
+                    s3_storage.upload_file(
+                        path=path,
+                        bucket=app.config["S3_RESULTS_BUCKET"],
+                        key=object_key,
+                        content_type="image/jpeg",
+                        region=app.config.get("S3_REGION"),
+                    )
+                    uploaded_map[filename] = object_key
+
+                big_fig_url = None
+                if result.big_fig_path:
+                    big_key = uploaded_map.get(os.path.basename(result.big_fig_path))
+                    if big_key:
+                        big_fig_url = s3_storage.generate_presigned_get_url(
+                            bucket=app.config["S3_RESULTS_BUCKET"],
+                            key=big_key,
+                            expires_in=app.config["S3_RESULT_URL_EXPIRES_SECONDS"],
+                            region=app.config.get("S3_REGION"),
+                        )
+
+                fig_urls = []
+                for path in result.fig_paths:
+                    fig_key = uploaded_map.get(os.path.basename(path))
+                    if not fig_key:
+                        continue
+                    fig_urls.append(
+                        s3_storage.generate_presigned_get_url(
+                            bucket=app.config["S3_RESULTS_BUCKET"],
+                            key=fig_key,
+                            expires_in=app.config["S3_RESULT_URL_EXPIRES_SECONDS"],
+                            region=app.config.get("S3_REGION"),
+                        )
+                    )
+
+                return jsonify(
+                    {
+                        "request_id": request_id,
+                        "big_fig_url": big_fig_url,
+                        "fig_urls": fig_urls,
+                    }
+                )
+        except InferenceOOMError:
+            gc.collect()
+            return jsonify(
+                {"error": "oom", "message": "Image too large to process on this server."}
+            ), 400
+        except (InvalidImageError, NoFacesFoundError) as exc:
+            gc.collect()
+            return jsonify({"error": "invalid_image", "message": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": "server_error", "message": str(exc)}), 500
 
     return app
 
