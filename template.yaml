@@ -18,6 +18,9 @@ Parameters:
   ResultUrlExpireSeconds:
     Type: Number
     Default: 3600
+  ImageUri:
+    Type: String
+    Description: ECR image URI (repo:tag or repo@digest) for PredictFunction.
 
 Resources:
   UploadBucket:
@@ -53,6 +56,7 @@ Resources:
     Properties:
       FunctionName: predict_age
       PackageType: Image
+      ImageUri: !Ref ImageUri
       MemorySize: !Ref FunctionMemorySize
       Timeout: !Ref FunctionTimeout
       Environment:
@@ -67,11 +71,6 @@ Resources:
             BucketName: !Ref UploadBucket
         - S3CrudPolicy:
             BucketName: !Ref ResultsBucket
-    Metadata:
-      Dockerfile: Dockerfile.lambda
-      DockerContext: .
-      DockerTag: latest
-
 
 Outputs:
   UploadBucketName:
