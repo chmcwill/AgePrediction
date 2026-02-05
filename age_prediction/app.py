@@ -8,14 +8,12 @@ import os
 import gc
 import tempfile
 import uuid
-import matplotlib
 try:
     import pillow_heif
 except ImportError:
     pillow_heif = None
 from werkzeug.exceptions import RequestEntityTooLarge
 
-from age_prediction.services.prediction import run_prediction
 from age_prediction.services import storage
 from age_prediction.services import s3_storage
 from age_prediction.services.errors import (
@@ -28,8 +26,6 @@ from age_prediction.services.errors import (
 
 if pillow_heif is not None:
     pillow_heif.register_heif_opener()
-
-matplotlib.use('Agg')  # use the non gui backend
 
 # shouldnt store permanent data in session (like forever, so just like their name is ok)
 MAX_CONTENT_LENGTH_MB = 10
@@ -167,6 +163,8 @@ def create_app():
             return redirect(url_for('home'))
 
         try:
+            # Lazy import to avoid loading torch/model code on routes that don't need inference.
+            from age_prediction.services.prediction import run_prediction
             result, generated_files = run_prediction(uploaded_filename, app.config['UPLOAD_FOLDER'])
         except InferenceOOMError:
             flash('OOM Error: Picture was too large to process on this server. Please upload a smaller image.')
@@ -252,6 +250,8 @@ def create_app():
         suffix = os.path.splitext(key)[1] or ".jpg"
 
         try:
+            # Lazy import keeps /api/presign fast during cold starts.
+            from age_prediction.services.prediction import run_prediction
             with tempfile.TemporaryDirectory(prefix="agepred_") as tmpdir:
                 # Lambda provides /tmp for scratch work; all outputs are uploaded to S3.
                 local_image = os.path.join(tmpdir, f"upload{suffix}")
