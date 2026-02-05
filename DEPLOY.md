@@ -1,31 +1,38 @@
-# Serverless Deploy (AWS SAM)
+# Serverless Deploy (CloudFormation + SAM Template)
 
 ## Prereqs
 - AWS CLI configured (`aws configure`) with access to create IAM, S3, Lambda, CloudFront.
-- AWS SAM CLI installed.
 - Docker running (required to build the Lambda container image).
 
 ## Build + Deploy
-1) Build the image-based Lambda:
+1) Build and push the Lambda image (manual ImageUri path):
 ```bash
-sam build
+docker buildx build --platform linux/amd64 -t agepred-predict-age -f Dockerfile.lambda . --load --provenance=false
+aws ecr create-repository --repository-name agepred-predict-age --region us-east-2
+aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 555813168261.dkr.ecr.us-east-2.amazonaws.com
+docker tag agepred-predict-age:latest 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:latest
+docker push 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:latest
 ```
 
-Note: Lambda uses `requirements-lambda.txt` (API-only deps). The image does not include
-templates/static assets; those are served from S3/CloudFront.
-
-2) Deploy (first time or updates):
+2) If a previous deploy failed and stack is stuck in `ROLLBACK_COMPLETE`, delete it:
 ```bash
-sam deploy
+aws cloudformation delete-stack --stack-name agepred-serverless --region us-east-2
+aws cloudformation wait stack-delete-complete --stack-name agepred-serverless --region us-east-2
 ```
 
-Defaults live in `samconfig.toml` (edit there if you want to change values).
-If this is your first deploy, run:
-`sam deploy --guided --resolve-image-repos`
+3) Deploy with ImageUri (short command via config):
+```bash
+.\scripts\deploy_stack.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:latest
+```
+
+Note: We are not using `sam build`/`sam deploy` in this flow because SAM repeatedly failed to inject `ImageUri`
+for the image-based Lambda in this project (`PredictFunction`), which caused change-set validation failures.
+Building/pushing the image explicitly and deploying with CloudFormation + `ImageUri` is deterministic and reliable.
+Default deploy settings live in `deploy.config.json`.
 
 ## Get Stack Outputs
 ```bash
-aws cloudformation describe-stacks --stack-name agepred-serverless --query "Stacks[0].Outputs"
+aws cloudformation describe-stacks --stack-name agepred-serverless --region us-east-2 --query "Stacks[0].Outputs"
 ```
 You need:
 - `PredictFunctionUrl`

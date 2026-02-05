@@ -1,0 +1,13 @@
+{
+  "template_file": "template.yaml",
+  "stack_name": "agepred-serverless",
+  "region": "us-east-2",
+  "capabilities": "CAPABILITY_IAM",
+  "parameters": {
+    "BucketPrefix": "agepred",
+    "FunctionMemorySize": "2048",
+    "FunctionTimeout": "60",
+    "PresignExpireSeconds": "600",
+    "ResultUrlExpireSeconds": "3600"
+  }
+}
