@@ -10,8 +10,8 @@
 docker buildx build --platform linux/amd64 -t agepred-predict-age -f Dockerfile.lambda . --load --provenance=false
 aws ecr create-repository --repository-name agepred-predict-age --region us-east-2
 aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 555813168261.dkr.ecr.us-east-2.amazonaws.com
-docker tag agepred-predict-age:latest 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:latest
-docker push 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:latest
+docker tag agepred-predict-age:latest 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:<tag>
+docker push 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:<tag>
 ```
 
 2) If a previous deploy failed and stack is stuck in `ROLLBACK_COMPLETE`, delete it:
@@ -22,8 +22,12 @@ aws cloudformation wait stack-delete-complete --stack-name agepred-serverless --
 
 3) Deploy with ImageUri (short command via config):
 ```bash
-.\scripts\deploy_stack.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:latest
+.\scripts\deploy_stack.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:<tag>
 ```
+
+Tag note:
+- Local deploys: use a new tag each deploy (`v1`, `v2`, `test-20260205-1`, etc.).
+- CI/CD: use the Git commit SHA as the image tag (or deploy by digest) so CloudFormation always detects a change and updates Lambda to the new image.
 
 Note: We are not using `sam build`/`sam deploy` in this flow because SAM repeatedly failed to inject `ImageUri`
 for the image-based Lambda in this project (`PredictFunction`), which caused change-set validation failures.
@@ -35,9 +39,7 @@ Default deploy settings live in `deploy.config.json`.
 aws cloudformation describe-stacks --stack-name agepred-serverless --region us-east-2 --query "Stacks[0].Outputs"
 ```
 You need:
-- `PredictFunctionUrl`
-- `FrontendBucketName`
-- `FrontendDistributionDomainName` (if CloudFront enabled)
+- `ApiBaseUrl`
 
 ## Configure the Frontend API URL
 Run the helper script to inject the Function URL into `static/index.html`:
@@ -50,10 +52,7 @@ Run the helper script to inject the Function URL into `static/index.html`:
 aws s3 sync static s3://<FrontendBucketName> --delete
 ```
 
-If CloudFront is enabled, use:
-```
-https://<FrontendDistributionDomainName>
-```
+Note: `FrontendBucketName`/CloudFront are added in a later template step.
 
 ## HEIC/HEIF Uploads
 HEIC/HEIF files are converted to JPG in the browser via `heic2any` (CDN). The backend

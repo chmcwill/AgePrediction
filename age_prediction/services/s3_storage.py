@@ -9,14 +9,18 @@ import uuid
 from typing import Optional
 
 import boto3
+from botocore.config import Config
 from werkzeug.utils import secure_filename
 
 
 def _get_s3_client(region: Optional[str] = None):
     """Return a boto3 S3 client for the given region (or default config)."""
+    s3_config = Config(signature_version="s3v4", s3={"addressing_style": "virtual"})
     if region:
-        return boto3.client("s3", region_name=region)
-    return boto3.client("s3")
+        # Force regional endpoint to avoid temporary redirect responses on presigned PUTs.
+        endpoint_url = f"https://s3.{region}.amazonaws.com"
+        return boto3.client("s3", region_name=region, endpoint_url=endpoint_url, config=s3_config)
+    return boto3.client("s3", config=s3_config)
 
 
 def _safe_basename(filename: str) -> str:

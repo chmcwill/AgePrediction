@@ -16,11 +16,11 @@ if (-not (Test-Path -Path $ImagePath)) {
 
 if (-not $ApiBase) {
   $outputs = aws cloudformation describe-stacks --stack-name $StackName --query "Stacks[0].Outputs" | ConvertFrom-Json
-  $ApiBase = ($outputs | Where-Object { $_.OutputKey -eq "PredictFunctionUrl" }).OutputValue
+  $ApiBase = ($outputs | Where-Object { $_.OutputKey -eq "ApiBaseUrl" }).OutputValue
 }
 
 if (-not $ApiBase) {
-  throw "API base URL not found. Pass -ApiBase or ensure stack outputs include PredictFunctionUrl."
+  throw "API base URL not found. Pass -ApiBase or ensure stack outputs include ApiBaseUrl."
 }
 
 $ext = [System.IO.Path]::GetExtension($ImagePath).ToLowerInvariant()
@@ -48,14 +48,33 @@ if (-not $presign.url) {
 }
 
 Write-Host "Uploading image..."
-Invoke-WebRequest -Method Put -Uri $presign.url -InFile $ImagePath -ContentType $contentType | Out-Null
+$uploadHeaders = @("Content-Type: $contentType")
+$uploadResult = & curl.exe -sS --ssl-no-revoke -X PUT -T $ImagePath -H $uploadHeaders[0] -w "`n%{http_code}" $presign.url
+$uploadLines = $uploadResult -split "`n"
+$uploadStatus = $uploadLines[-1]
+$uploadBody = ($uploadLines[0..($uploadLines.Length - 2)] -join "`n").Trim()
+if ($uploadStatus -ne "200") {
+  throw "S3 upload failed with HTTP $uploadStatus. Body: $uploadBody"
+}
 
 Write-Host "Requesting prediction..."
 $predictBody = @{
   key = $presign.key
 } | ConvertTo-Json
 
-$predict = Invoke-RestMethod -Method Post -Uri "$ApiBase/api/predict" -ContentType "application/json" -Body $predictBody
+$predict = $null
+try {
+  $predict = Invoke-RestMethod -Method Post -Uri "$ApiBase/api/predict" -ContentType "application/json" -Body $predictBody
+} catch {
+  $msg = $_.Exception.Message
+  if ($msg -match "Endpoint request timed out") {
+    Write-Host "First prediction call timed out (likely cold start). Retrying once in 5 seconds..."
+    Start-Sleep -Seconds 5
+    $predict = Invoke-RestMethod -Method Post -Uri "$ApiBase/api/predict" -ContentType "application/json" -Body $predictBody
+  } else {
+    throw
+  }
+}
 
 Write-Host "Prediction complete."
 Write-Host "Big figure URL: $($predict.big_fig_url)"

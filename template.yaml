@@ -71,9 +71,33 @@ Resources:
             BucketName: !Ref UploadBucket
         - S3CrudPolicy:
             BucketName: !Ref ResultsBucket
+      Events:
+        ApiRoot:
+          Type: Api
+          Properties:
+            Path: /
+            Method: ANY
+            RestApiId: !Ref AgePredApi
+        ApiProxy:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+            RestApiId: !Ref AgePredApi
+
+  AgePredApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type'"
+        AllowOrigin: "'*'"
 
 Outputs:
   UploadBucketName:
     Value: !Ref UploadBucket
   ResultsBucketName:
     Value: !Ref ResultsBucket
+  ApiBaseUrl:
+    Value: !Sub "https://${AgePredApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"

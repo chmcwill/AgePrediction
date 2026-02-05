@@ -6,10 +6,10 @@ param(
 $ErrorActionPreference = "Stop"
 
 $outputs = aws cloudformation describe-stacks --stack-name $StackName --query "Stacks[0].Outputs" | ConvertFrom-Json
-$predictUrl = ($outputs | Where-Object { $_.OutputKey -eq "PredictFunctionUrl" }).OutputValue
+$predictUrl = ($outputs | Where-Object { $_.OutputKey -eq "ApiBaseUrl" }).OutputValue
 
 if (-not $predictUrl) {
-  throw "PredictFunctionUrl not found in stack outputs."
+  throw "ApiBaseUrl not found in stack outputs."
 }
 
 $indexContent = Get-Content -Raw -Path $IndexPath
