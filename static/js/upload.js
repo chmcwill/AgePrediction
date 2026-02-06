@@ -11,7 +11,8 @@
   const statusMessage = document.getElementById("statusMessage");
   const resultsSection = document.getElementById("resultsSection");
   const resultImages = document.getElementById("resultImages");
-  const apiBase = window.AGE_PREDICT_API_BASE || document.body.dataset.apiBase || "";
+  let apiBase = window.AGE_PREDICT_API_BASE || document.body.dataset.apiBase || "";
+  const API_TIMEOUT_MS = 28000;
 
   // Inputs: isLoading (bool), message (string). Output: UI side effects only.
   const setLoading = (isLoading, message) => {
@@ -58,19 +59,41 @@
   };
 
   // Inputs: path (string), body (object). Output: parsed JSON response.
-  const postJson = async (path, body) => {
-    const response = await fetch(`${apiBase}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body || {}),
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || "Request failed");
+  const postJson = async (path, body, timeoutMs = API_TIMEOUT_MS) => {
+    if (!apiBase) {
+      throw new Error("api_base_missing");
     }
-    return response.json();
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${apiBase}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body || {}),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || "Request failed");
+      }
+      return response.json();
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  };
+
+  const shouldRetryPredict = (error) => {
+    const message = (error && error.message ? error.message : "").toLowerCase();
+    return (
+      message.includes("endpoint request timed out") ||
+      message.includes("timeout") ||
+      message.includes("internal server error") ||
+      message.includes("502") ||
+      message.includes("503") ||
+      message.includes("504")
+    );
   };
 
   const isHeicFile = (file) => {
@@ -99,9 +122,38 @@
     return new File([blob], newName, { type: "image/jpeg" });
   };
 
+  const loadApiBaseFromConfig = async () => {
+    if (apiBase && apiBase !== "__API_BASE_URL__") {
+      return apiBase;
+    }
+    try {
+      const response = await fetch("./config.json", { cache: "no-store" });
+      if (!response.ok) {
+        return apiBase;
+      }
+      const payload = await response.json();
+      if (payload && payload.apiBase) {
+        apiBase = payload.apiBase;
+      }
+    } catch (err) {
+      // Best-effort; keep existing apiBase if fetch fails.
+      // eslint-disable-next-line no-console
+      console.error("Failed to load config.json:", err);
+    }
+    return apiBase;
+  };
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     clearResults();
+    await loadApiBaseFromConfig();
+    if (!apiBase || apiBase === "__API_BASE_URL__") {
+      setLoading(
+        false,
+        "App is not configured with API URL yet. Ensure static/config.json is reachable at /static/config.json."
+      );
+      return;
+    }
 
     let file = fileInput && fileInput.files ? fileInput.files[0] : null;
     if (!file) {
@@ -133,7 +185,17 @@
       }
 
       setLoading(true, "Running prediction...");
-      const prediction = await postJson("/api/predict", { key: presign.key });
+      let prediction;
+      try {
+        prediction = await postJson("/api/predict", { key: presign.key });
+      } catch (predictErr) {
+        if (!shouldRetryPredict(predictErr)) {
+          throw predictErr;
+        }
+        setLoading(true, "Warming up model, retrying prediction...");
+        await new Promise((resolve) => window.setTimeout(resolve, 5000));
+        prediction = await postJson("/api/predict", { key: presign.key });
+      }
       showResults(prediction.big_fig_url, prediction.fig_urls || []);
       setLoading(false, "");
     } catch (err) {

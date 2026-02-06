@@ -1,6 +1,6 @@
 param(
   [string]$StackName = "agepred-serverless",
-  [string]$IndexPath = "static/index.html"
+  [string]$ConfigPath = "static/config.json"
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,8 +12,7 @@ if (-not $predictUrl) {
   throw "ApiBaseUrl not found in stack outputs."
 }
 
-$indexContent = Get-Content -Raw -Path $IndexPath
-$updated = $indexContent -replace "__API_BASE_URL__", $predictUrl
-Set-Content -Path $IndexPath -Value $updated -NoNewline
+$configContent = "{`n  `"apiBase`": `"$predictUrl`"`n}`n"
+Set-Content -Path $ConfigPath -Value $configContent -NoNewline
 
-Write-Host "Updated $IndexPath with API base URL: $predictUrl"
+Write-Host "Updated $ConfigPath with API base URL: $predictUrl"
