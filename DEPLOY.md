@@ -33,6 +33,16 @@ aws cloudformation wait stack-delete-complete --stack-name agepred-serverless --
 .\scripts\deploy_stack.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:<tag>
 ```
 
+Optional (all-in-one reset + deploy):
+```powershell
+.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:<tag>
+```
+Notes:
+- This deletes the stack, empties the buckets if needed, redeploys, then updates `static/config.json`.
+- Add `-Force` to skip the destructive delete prompt.
+- Add `-SkipDelete` or `-SkipFrontendUpdate` to customize.
+- Add `-OpenFrontend` to open the CloudFront URL after deploy.
+
 Tag note:
 - Local deploys: use a new tag each deploy (`v1`, `v2`, `test-20260205-1`, etc.).
 - CI/CD: use the Git commit SHA as the image tag (or deploy by digest) so CloudFormation always detects a change and updates Lambda to the new image.
@@ -48,6 +58,9 @@ aws cloudformation describe-stacks --stack-name agepred-serverless --region us-e
 ```
 You need:
 - `ApiBaseUrl`
+- `FrontendBucketName`
+- `CloudFrontUrl`
+- `CloudFrontDistributionId` (for invalidations)
 
 ## Configure the Frontend API URL
 The frontend now reads `static/config.json` for the API base URL.
@@ -62,9 +75,19 @@ change frontend JS, bump the query string value if you want browsers to fetch th
 ## Upload the Static Site
 ```bash
 aws s3 sync static s3://<FrontendBucketName> --delete
+e.g. aws s3 sync static s3://agepred-frontend-555813168261-us-east-2 --delete
 ```
 
-Note: `FrontendBucketName`/CloudFront are added in a later template step.
+You can print (or open) the CloudFront URL:
+```powershell
+.\scripts\open_frontend.ps1 -StackName agepred-serverless
+.\scripts\open_frontend.ps1 -StackName agepred-serverless -Open
+```
+
+If you want new frontend changes to appear immediately, invalidate CloudFront:
+```bash
+aws cloudfront create-invalidation --distribution-id <CloudFrontDistributionId> --paths "/*"
+```
 
 ## HEIC/HEIF Uploads
 HEIC/HEIF files are converted to JPG in the browser via `heic2any` (CDN). The backend
