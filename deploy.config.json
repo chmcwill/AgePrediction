@@ -5,7 +5,7 @@
   "capabilities": "CAPABILITY_IAM",
   "parameters": {
     "BucketPrefix": "agepred",
-    "FunctionMemorySize": "4096",
+    "FunctionMemorySize": "3008",
     "FunctionTimeout": "60",
     "PresignExpireSeconds": "600",
     "ResultUrlExpireSeconds": "3600"

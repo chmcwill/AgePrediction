@@ -20,6 +20,14 @@ aws cloudformation delete-stack --stack-name agepred-serverless --region us-east
 aws cloudformation wait stack-delete-complete --stack-name agepred-serverless --region us-east-2
 ```
 
+If stack deletion fails with `DELETE_FAILED` (commonly due to non-empty S3 buckets), empty the buckets and retry delete:
+```bash
+aws s3 rm s3://agepred-uploads-555813168261-us-east-2 --recursive
+aws s3 rm s3://agepred-results-555813168261-us-east-2 --recursive
+aws cloudformation delete-stack --stack-name agepred-serverless --region us-east-2
+aws cloudformation wait stack-delete-complete --stack-name agepred-serverless --region us-east-2
+```
+
 3) Deploy with ImageUri (short command via config):
 ```bash
 .\scripts\deploy_stack.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:<tag>
@@ -42,10 +50,14 @@ You need:
 - `ApiBaseUrl`
 
 ## Configure the Frontend API URL
-Run the helper script to inject the Function URL into `static/index.html`:
+The frontend now reads `static/config.json` for the API base URL.
+Run the helper script to update it after each deploy (API Gateway URL changes per stack):
 ```powershell
 .\scripts\update_frontend.ps1 -StackName agepred-serverless
 ```
+
+Note: `static/index.html` references `js/upload.js?v=1` for cache busting. When you
+change frontend JS, bump the query string value if you want browsers to fetch the new file.
 
 ## Upload the Static Site
 ```bash
