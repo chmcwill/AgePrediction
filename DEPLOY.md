@@ -24,6 +24,7 @@ If stack deletion fails with `DELETE_FAILED` (commonly due to non-empty S3 bucke
 ```bash
 aws s3 rm s3://agepred-uploads-555813168261-us-east-2 --recursive
 aws s3 rm s3://agepred-results-555813168261-us-east-2 --recursive
+aws s3 rm s3://agepred-frontend-555813168261-us-east-2 --recursive
 aws cloudformation delete-stack --stack-name agepred-serverless --region us-east-2
 aws cloudformation wait stack-delete-complete --stack-name agepred-serverless --region us-east-2
 ```
@@ -39,9 +40,11 @@ Optional (all-in-one reset + deploy):
 ```
 Notes:
 - This deletes the stack, empties the buckets if needed, redeploys, then updates `static/config.json`.
-- Add `-Force` to skip the destructive delete prompt.
+- Add `-Force` to skip the destructive delete confirmation prompt.
 - Add `-SkipDelete` or `-SkipFrontendUpdate` to customize.
 - Add `-OpenFrontend` to open the CloudFront URL after deploy.
+- Add `-InvalidateCloudFront` to clear the CDN cache after deploy.
+- Add `-SkipFrontendSync` to skip syncing `static/` to the frontend bucket.
 
 Tag note:
 - Local deploys: use a new tag each deploy (`v1`, `v2`, `test-20260205-1`, etc.).

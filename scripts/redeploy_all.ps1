@@ -4,7 +4,9 @@ param(
   [switch]$SkipDelete,
   [switch]$SkipFrontendUpdate,
   [switch]$Force,
-  [switch]$OpenFrontend
+  [switch]$OpenFrontend,
+  [switch]$InvalidateCloudFront,
+  [switch]$SkipFrontendSync
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,14 +24,16 @@ $bucketPrefix = $config.parameters.BucketPrefix
 if (-not $SkipDelete) {
   Write-Host "Deleting stack '$stackName' in $region..."
   aws cloudformation delete-stack --stack-name $stackName --region $region | Out-Null
-  try {
-    aws cloudformation wait stack-delete-complete --stack-name $stackName --region $region | Out-Null
-  } catch {
+  aws cloudformation wait stack-delete-complete --stack-name $stackName --region $region | Out-Null
+  if ($LASTEXITCODE -ne 0) {
     Write-Host "Stack deletion failed or is blocked. Attempting to empty buckets..."
     .\scripts\empty_buckets.ps1 -StackName $stackName -Region $region -BucketPrefix $bucketPrefix -Force:$Force
     Write-Host "Retrying stack delete..."
     aws cloudformation delete-stack --stack-name $stackName --region $region | Out-Null
     aws cloudformation wait stack-delete-complete --stack-name $stackName --region $region | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw "Stack deletion still failed. Resolve DELETE_FAILED before redeploying."
+    }
   }
 }
 
@@ -39,6 +43,26 @@ Write-Host "Deploying stack with ImageUri: $ImageUri"
 if (-not $SkipFrontendUpdate) {
   Write-Host "Updating frontend config.json with API base URL..."
   .\scripts\update_frontend.ps1 -StackName $stackName
+}
+
+if (-not $SkipFrontendSync) {
+  $outputs = aws cloudformation describe-stacks --stack-name $stackName --query "Stacks[0].Outputs" | ConvertFrom-Json
+  $frontendBucket = ($outputs | Where-Object { $_.OutputKey -eq "FrontendBucketName" }).OutputValue
+  if (-not $frontendBucket) {
+    throw "FrontendBucketName not found in stack outputs."
+  }
+  Write-Host "Syncing static site to s3://$frontendBucket ..."
+  aws s3 sync static "s3://$frontendBucket" --delete | Out-Null
+}
+
+if ($InvalidateCloudFront) {
+  $outputs = aws cloudformation describe-stacks --stack-name $stackName --query "Stacks[0].Outputs" | ConvertFrom-Json
+  $distId = ($outputs | Where-Object { $_.OutputKey -eq "CloudFrontDistributionId" }).OutputValue
+  if (-not $distId) {
+    throw "CloudFrontDistributionId not found in stack outputs."
+  }
+  Write-Host "Creating CloudFront invalidation for distribution $distId..."
+  aws cloudfront create-invalidation --distribution-id $distId --paths "/*" | Out-Null
 }
 
 if ($OpenFrontend) {
