@@ -22,6 +22,7 @@
     </script>
 
     <h1 class="title">Age Predictor: How Old Do You Appear?</h1>
+    <p id="warmupMessage" class="center_p" style="display:none; color:#444; font-weight:600;"></p>
 
     <div class="outer">
       <div class="inner">
@@ -31,7 +32,7 @@
           <p><input type="file" name="file" id="fileInput" accept="image/*"></p>
           <p id="statusMessage" style="color:#222; font-weight:bold"></p>
           <p>
-            <input type="submit" name="submit" id="submitBtn"/>
+            <input type="submit" name="submit" id="submitBtn" disabled />
             <span id="loadingSpinner" style="display:none; margin-left:10px;">
               <i class="fa fa-spinner fa-spin fa-2x"></i>
               <span>Processing...</span>
@@ -91,11 +92,14 @@
       Higher resolution images usually perform better.
     </p>
 
-    <div style="text-align: center">
-      <h4 style="margin-right:.69cm; display:inline-block">Cameron McWilliams</h4>
-      <a href="https://www.linkedin.com/in/cameron-mcwilliams-7aa036114/" style="color:black">
-        <i class="fa fa-linkedin fa-2x top2"></i>
-      </a>
+    <div style="position:relative; max-width:900px; margin:24px auto 0;">
+      <div id="buildVersion" style="position:fixed; left:16px; bottom:12px; color:#666; font-size:0.9rem;"></div>
+      <div style="text-align:center;">
+        <h4 style="margin-right:.69cm; display:inline-block">Cameron McWilliams</h4>
+        <a href="https://www.linkedin.com/in/cameron-mcwilliams-7aa036114/" style="color:black">
+          <i class="fa fa-linkedin fa-2x top2"></i>
+        </a>
+      </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/heic2any/dist/heic2any.min.js"></script>

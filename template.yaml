@@ -38,6 +38,11 @@ Resources:
             AllowedHeaders:
               - "*"
             MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireUploadsAfterOneDay
+            Status: Enabled
+            ExpirationInDays: 1
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -62,6 +67,11 @@ Resources:
             AllowedHeaders:
               - "*"
             MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireResultsAfterOneDay
+            Status: Enabled
+            ExpirationInDays: 1
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true

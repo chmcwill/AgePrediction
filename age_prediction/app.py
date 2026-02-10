@@ -231,6 +231,18 @@ def create_app():
             }
         )
 
+    @app.route("/api/health", methods=["GET"])
+    def health_check():
+        """Health ping (input: optional deep=true; output: JSON ok flag)."""
+        # Optional deep warmup loads model weights so first prediction is faster.
+        if request.args.get("deep") == "true":
+            # Import prediction to load plotting deps; also load model weights.
+            from age_prediction.services.prediction import DEFAULT_PREDICTION_CONFIG
+            from age_prediction.services.models import get_runtime_models
+            classes = tuple(range(10, 71))
+            get_runtime_models(DEFAULT_PREDICTION_CONFIG.classes, DEFAULT_PREDICTION_CONFIG.min_face_size)
+        return jsonify({"ok": True})
+
     @app.route("/api/predict", methods=["POST"])
     def predict_from_s3():
         """Run inference on S3 upload (input: JSON key/request_id; output: JSON URLs)."""

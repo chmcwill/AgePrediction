@@ -9,10 +9,13 @@
   const submitBtn = document.getElementById("submitBtn");
   const spinner = document.getElementById("loadingSpinner");
   const statusMessage = document.getElementById("statusMessage");
+  const warmupMessage = document.getElementById("warmupMessage");
+  const buildVersion = document.getElementById("buildVersion");
   const resultsSection = document.getElementById("resultsSection");
   const resultImages = document.getElementById("resultImages");
   let apiBase = window.AGE_PREDICT_API_BASE || document.body.dataset.apiBase || "";
   const API_TIMEOUT_MS = 28000;
+  const WARMUP_TIMEOUT_MS = 28000;
 
   // Inputs: isLoading (bool), message (string). Output: UI side effects only.
   const setLoading = (isLoading, message) => {
@@ -34,6 +37,19 @@
     }
     if (resultsSection) {
       resultsSection.style.display = "none";
+    }
+  };
+
+  const setWarmupMessage = (message) => {
+    if (!warmupMessage) {
+      return;
+    }
+    if (message) {
+      warmupMessage.textContent = message;
+      warmupMessage.style.display = "block";
+    } else {
+      warmupMessage.textContent = "";
+      warmupMessage.style.display = "none";
     }
   };
 
@@ -135,6 +151,9 @@
       if (payload && payload.apiBase) {
         apiBase = payload.apiBase;
       }
+      if (payload && payload.buildVersion && buildVersion) {
+        buildVersion.textContent = `Build: ${payload.buildVersion}`;
+      }
     } catch (err) {
       // Best-effort; keep existing apiBase if fetch fails.
       // eslint-disable-next-line no-console
@@ -142,6 +161,42 @@
     }
     return apiBase;
   };
+
+  const warmupApi = async () => {
+    await loadApiBaseFromConfig();
+    if (submitBtn) {
+      submitBtn.disabled = true;
+    }
+    if (!apiBase || apiBase === "__API_BASE_URL__") {
+      setWarmupMessage("App is not configured with API URL yet. Check /static/config.json.");
+      if (submitBtn) {
+        submitBtn.disabled = false;
+      }
+      return;
+    }
+    setWarmupMessage("Warming up the serverless container and model (cold start)...");
+    try {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), WARMUP_TIMEOUT_MS);
+      const response = await fetch(`${apiBase}/api/health?deep=true`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      window.clearTimeout(timeoutId);
+      if (response.ok) {
+        setWarmupMessage("");
+      } else {
+        setWarmupMessage("Warmup failed. Serverless cold start may make the first request slower.");
+      }
+    } catch (err) {
+      setWarmupMessage("Warmup failed. Serverless cold start may make the first request slower.");
+    }
+    if (submitBtn) {
+      submitBtn.disabled = false;
+    }
+  };
+
+  warmupApi();
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -192,12 +247,14 @@
         if (!shouldRetryPredict(predictErr)) {
           throw predictErr;
         }
-        setLoading(true, "Warming up model, retrying prediction...");
+        setWarmupMessage("Warming up the serverless container and model (cold start)...");
+        setLoading(true, "Retrying prediction...");
         await new Promise((resolve) => window.setTimeout(resolve, 5000));
         prediction = await postJson("/api/predict", { key: presign.key });
       }
       showResults(prediction.big_fig_url, prediction.fig_urls || []);
       setLoading(false, "");
+      setWarmupMessage("");
     } catch (err) {
       setLoading(false, "Something went wrong. Please try again.");
       // eslint-disable-next-line no-console
