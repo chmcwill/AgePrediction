@@ -22,8 +22,10 @@ p {
 }
 
 img {
-    display: flex;
-    margin: auto;
+    display: block;
+    margin: 0 auto;
+    max-width: 100%;
+    height: auto;
 }
 
 .center_img {
@@ -47,8 +49,9 @@ img {
 
 .left_p {
     text-align: left;
-    width: 50%;
-    margin-left: 25%;
+    width: 90%;
+    max-width: 720px;
+    margin: 1em auto;
 }
 
 .outer {
