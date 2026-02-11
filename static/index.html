@@ -22,18 +22,18 @@
     </script>
 
     <h1 class="title">Age Predictor: How Old Do You Appear?</h1>
-    <p id="warmupMessage" class="center_p" style="display:none; color:#444; font-weight:600;"></p>
+    <p id="warmupMessage" class="center_p warmup-message is-hidden"></p>
 
     <div class="outer">
       <div class="inner">
-        <form action="#" method="post" enctype="multipart/form-data" id="uploadForm">
+        <form action="#" method="post" enctype="multipart/form-data" id="uploadForm" class="upload-form">
           <h3 class="center_p">Input an Image:</h3>
           <p>Images with one or more front facing faces in them will work.</p>
           <p><input type="file" name="file" id="fileInput" accept="image/*"></p>
-          <p id="statusMessage" style="color:#222; font-weight:bold"></p>
+          <p id="statusMessage" class="status-message"></p>
           <p>
-            <input type="submit" name="submit" id="submitBtn" disabled />
-            <span id="loadingSpinner" style="display:none; margin-left:10px;">
+            <input type="submit" name="submit" id="submitBtn" value="Submit" disabled />
+            <span id="loadingSpinner" class="loading-spinner is-hidden">
               <i class="fa fa-spinner fa-spin fa-2x"></i>
               <span>Processing...</span>
             </span>
@@ -42,9 +42,20 @@
       </div>
     </div>
 
-    <div id="resultsSection" style="display:none;">
-      <h2 class="title">Results</h2>
-      <div id="resultImages"></div>
+    <div id="resultsSection" class="is-hidden">
+      <h2 class="title results-title">Results</h2>
+      <p id="bigResultsText" class="results-copy results-intro is-hidden">
+        Below is the original image with detected faces and their
+        annotations. Any detection issues are noted in the labels.
+      </p>
+      <p id="smallResultsText" class="results-copy space is-hidden">
+        Below is the face crop and its inferred age distribution. The curve is the
+        model's confidence over age (e.g., 0.04 at age 20 = 4% likelihood).
+      </p>
+      <div id="resultImages" class="results-images"></div>
+      <p class="center_p">
+        <button type="button" id="tryAnotherBtn">Try Another Image!</button>
+      </p>
     </div>
 
     <h3 class="title">How does this work?</h3>
@@ -92,11 +103,11 @@
       Higher resolution images usually perform better.
     </p>
 
-    <div style="position:relative; max-width:900px; margin:24px auto 0;">
-      <div id="buildVersion" style="position:fixed; left:16px; bottom:12px; color:#666; font-size:0.9rem;"></div>
-      <div style="text-align:center;">
-        <h4 style="margin-right:.69cm; display:inline-block">Cameron McWilliams</h4>
-        <a href="https://www.linkedin.com/in/cameron-mcwilliams-7aa036114/" style="color:black">
+    <div class="footer-wrap">
+      <div id="buildVersion" class="build-version"></div>
+      <div class="footer-center">
+        <h4 class="footer-name">Cameron McWilliams</h4>
+        <a href="https://www.linkedin.com/in/cameron-mcwilliams-7aa036114/" class="footer-link">
           <i class="fa fa-linkedin fa-2x top2"></i>
         </a>
       </div>
