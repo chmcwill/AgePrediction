@@ -4,6 +4,7 @@ Prediction service that wraps model execution without Flask dependencies.
 Structured for inference-only code paths.
 """
 import os
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Tuple
@@ -42,6 +43,7 @@ class PredictionConfig:
     face_prob_thresh: float = 0.95  # detector probability threshold
     min_face_size: int = 30  # minimum face box dimension (pixels) before filtering
     tight_layout: bool = True  # whether to call tight_layout on per-face plots
+    fig_dpi: int = 100  # DPI for saved figures (lower = faster, smaller)
     detect_max_size: int = 1600  # max dimension for the detector (safe_detect)
     def __post_init__(self):
         if self.age_min > self.age_max:
@@ -295,51 +297,59 @@ def predict_faces(
     """Run embeddings, age prediction, and figure creation."""
     figs = []
     base_name = img_ctx.filename
+    face_images: List[Image.Image] = []
+    face_tensors: List[torch.Tensor] = []
+    face_indices: List[int] = []
 
-    for face in kept_faces:
+    for idx, face in enumerate(kept_faces):
         if face.crop is None:
             continue
+        face_images.append(tensor_to_pil(face.crop))
+        face_tensors.append(face.crop)
+        face_indices.append(idx)
 
-        face_image = tensor_to_pil(face.crop)
-        face_tensor = face.crop.to(device)
-
+    if face_tensors:
+        batch = torch.stack(face_tensors).to(device)
         try:
             with torch.no_grad(), torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                embedding = embeddor.forward_1792(face_tensor)
-                output = model(embedding).cpu().float()
+                embeddings = embeddor.forward_1792(batch)
+                outputs = model(embeddings).cpu().float()
         except RuntimeError as e:
-            face_image.close()
+            for img in face_images:
+                img.close()
             if "memory" in str(e).lower() or "oom" in str(e).lower():
                 raise InferenceOOMError("OOM during inference") from e
             raise
 
-        pred, output_softmax = predict_age(output, classes=config.classes)
-        pred_array = np.atleast_1d(np.asarray(pred))
-        face.prediction = pred_array
+        preds, softmaxes = predict_age(outputs, classes=config.classes)
+        for local_idx, face_idx in enumerate(face_indices):
+            face = kept_faces[face_idx]
+            pred_array = np.atleast_1d(np.asarray(preds[local_idx]))
+            face.prediction = pred_array
 
-        fig = fpl.plot_image_and_pred(
-            fpl.FacePlotData(
-                image=face_image,
-                prediction=float(pred_array[0]),
-                output_softmax=output_softmax,
-                image_name=base_name,
-                img_input_size=config.resize_shape,
-                classification=True,
-                age_min=config.age_min,
-                age_max=config.age_max,
-            ),
-            tight_layout=config.tight_layout,
-            figshow=False,
-        )
-        face_image.close()
-        figs.append(fig)
+            fig = fpl.plot_image_and_pred(
+                fpl.FacePlotData(
+                    image=face_images[local_idx],
+                    prediction=float(pred_array[0]),
+                    output_softmax=softmaxes[local_idx : local_idx + 1],
+                    image_name=base_name,
+                    img_input_size=config.resize_shape,
+                    classification=True,
+                    age_min=config.age_min,
+                    age_max=config.age_max,
+                ),
+                tight_layout=config.tight_layout,
+                figshow=False,
+            )
+            face_images[local_idx].close()
+            figs.append(fig)
 
     overlays = _build_overlay_payload(img_ctx)
     big_fig, _ = fpl.overlay_preds_on_img(img_ctx.image, overlays)
     return figs, big_fig
 
 
-def render_figures(figlist, big_fig, upload_dir, base_filename):
+def render_figures(figlist, big_fig, upload_dir, base_filename, config: PredictionConfig):
     """Save figures to disk and return paths plus display flags."""
     fig_paths: List[str] = []
     generated_files: List[str] = []
@@ -348,9 +358,9 @@ def render_figures(figlist, big_fig, upload_dir, base_filename):
     plt_big = False
     if big_fig is not None:
         big_fig_path = os.path.join(
-            upload_dir, f"{base_filename}_big_fig_{np.random.randint(0, 10000)}.jpg"
+            upload_dir, f"{base_filename}_big_fig_{uuid.uuid4().hex}.jpg"
         )
-        big_fig.savefig(big_fig_path)
+        big_fig.savefig(big_fig_path, dpi=config.fig_dpi)
         generated_files.append(big_fig_path)
         plt_big = True
 
@@ -358,9 +368,9 @@ def render_figures(figlist, big_fig, upload_dir, base_filename):
     for fi, fig in enumerate(figlist):
         fig_path = os.path.join(
             upload_dir,
-            f"{base_filename}_prediction{fi}_{np.random.randint(0, 10000)}.jpg",
+            f"{base_filename}_prediction{fi}_{uuid.uuid4().hex}.jpg",
         )
-        fig.savefig(fig_path)
+        fig.savefig(fig_path, dpi=config.fig_dpi)
         fig_paths.append(fig_path)
         generated_files.append(fig_path)
         explainsmall = True
@@ -392,7 +402,7 @@ def run_prediction(image_path, upload_dir, config: PredictionConfig = DEFAULT_PR
         kept_faces = [face for face in img_ctx.faces if face.status == "kept"]
         figlist, big_fig = predict_faces(img_ctx, kept_faces, embeddor, model, device, config)
         base_filename = os.path.splitext(os.path.basename(image_path))[0]
-        result, generated_files = render_figures(figlist, big_fig, upload_dir, base_filename)
+        result, generated_files = render_figures(figlist, big_fig, upload_dir, base_filename, config)
         return result, generated_files
     finally:
         try:

@@ -16,6 +16,8 @@ migrations/
 *.sqlite3
 .DS_Store
 *.tmp
+*tmp
+*.pstats
 
 #data
 static/images/
