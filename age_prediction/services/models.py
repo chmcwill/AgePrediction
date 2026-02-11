@@ -27,12 +27,16 @@ def predict_age(model_out: torch.Tensor, classes: Iterable[int], thresh: float =
     """
     Expectation over class probabilities to estimate age.
     """
+    # model_out shape: (N, num_classes). All operations below are vectorized over batch N.
     softmax_out = torch.nn.functional.softmax(model_out, dim=1).detach().cpu().numpy()
+    # Mask low-probability classes per row.
     greater_than_mask = np.zeros_like(softmax_out)
     greater_than_mask[softmax_out >= thresh] = 1
+    # Sum of retained probabilities per row (shape: (N,)).
     sum_greater_than = np.sum(np.multiply(greater_than_mask, softmax_out), axis=1)
     softmax_out[softmax_out < thresh] = 0
     ages_all = np.array(list(classes)).astype(np.float32)
+    # Weighted sum across classes -> one age estimate per row.
     pred = np.round(np.dot(softmax_out, ages_all) / sum_greater_than, 1)
     return pred, softmax_out
 
