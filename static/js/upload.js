@@ -12,7 +12,10 @@
   const warmupMessage = document.getElementById("warmupMessage");
   const buildVersion = document.getElementById("buildVersion");
   const resultsSection = document.getElementById("resultsSection");
+  const bigResultsText = document.getElementById("bigResultsText");
   const resultImages = document.getElementById("resultImages");
+  const smallResultsText = document.getElementById("smallResultsText");
+  const tryAnotherBtn = document.getElementById("tryAnotherBtn");
   let apiBase = window.AGE_PREDICT_API_BASE || document.body.dataset.apiBase || "";
   const API_TIMEOUT_MS = 28000;
   const WARMUP_TIMEOUT_MS = 28000;
@@ -34,6 +37,13 @@
   const clearResults = () => {
     if (resultImages) {
       resultImages.innerHTML = "";
+    }
+    if (bigResultsText) {
+      bigResultsText.classList.add("is-hidden");
+    }
+    if (smallResultsText) {
+      smallResultsText.classList.add("is-hidden");
+      smallResultsText.style.display = "";
     }
     if (resultsSection) {
       resultsSection.style.display = "none";
@@ -59,16 +69,35 @@
       return;
     }
     resultImages.innerHTML = "";
-    if (bigUrl) {
+    const smallUrls = figUrls || [];
+    const showBig = Boolean(bigUrl);
+    if (bigResultsText) {
+      bigResultsText.classList.toggle("is-hidden", !showBig);
+      bigResultsText.style.display = "";
+    }
+    if (showBig) {
+      if (bigResultsText) {
+        resultImages.appendChild(bigResultsText);
+      }
       const bigImg = document.createElement("img");
       bigImg.src = bigUrl;
       bigImg.alt = "Prediction overview";
+      bigImg.className = "result-image result-image--big";
       resultImages.appendChild(bigImg);
     }
-    (figUrls || []).forEach((url) => {
+    if (smallResultsText) {
+      const showSmallText = smallUrls.length > 0;
+      smallResultsText.classList.toggle("is-hidden", !showSmallText);
+      smallResultsText.style.display = "";
+      if (showSmallText) {
+        resultImages.appendChild(smallResultsText);
+      }
+    }
+    smallUrls.forEach((url) => {
       const img = document.createElement("img");
       img.src = url;
       img.alt = "Prediction detail";
+      img.className = "result-image";
       resultImages.appendChild(img);
     });
     resultsSection.style.display = "block";
@@ -175,6 +204,8 @@
       return;
     }
     setWarmupMessage("Warming up the serverless container and model (cold start)...");
+    const warmupFailedMessage =
+      "Warmup failed. Serverless cold start may make the first request slower.";
     try {
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), WARMUP_TIMEOUT_MS);
@@ -186,10 +217,10 @@
       if (response.ok) {
         setWarmupMessage("");
       } else {
-        setWarmupMessage("Warmup failed. Serverless cold start may make the first request slower.");
+        setWarmupMessage(warmupFailedMessage);
       }
     } catch (err) {
-      setWarmupMessage("Warmup failed. Serverless cold start may make the first request slower.");
+      setWarmupMessage(warmupFailedMessage);
     }
     if (submitBtn) {
       submitBtn.disabled = false;
@@ -197,6 +228,16 @@
   };
 
   warmupApi();
+
+  if (tryAnotherBtn) {
+    tryAnotherBtn.addEventListener("click", () => {
+      if (fileInput) {
+        fileInput.value = "";
+      }
+      clearResults();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
