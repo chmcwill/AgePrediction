@@ -156,7 +156,7 @@
 
   const convertHeicToJpeg = async (file) => {
     if (!window.heic2any) {
-      throw new Error("heic2any library not loaded");
+      throw new Error("heic2any_not_loaded");
     }
     const blob = await window.heic2any({
       blob: file,
@@ -297,7 +297,15 @@
       setLoading(false, "");
       setWarmupMessage("");
     } catch (err) {
-      setLoading(false, "Something went wrong. Please try again.");
+      const message = (err && err.message) || "";
+      if (message === "heic2any_not_loaded") {
+        setLoading(
+          false,
+          "HEIC conversion library failed to load. Please retry or upload a JPG/PNG instead."
+        );
+      } else {
+        setLoading(false, "Something went wrong. Please try again.");
+      }
       // eslint-disable-next-line no-console
       console.error(err);
     }

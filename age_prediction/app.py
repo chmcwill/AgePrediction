@@ -8,10 +8,6 @@ import os
 import gc
 import tempfile
 import uuid
-try:
-    import pillow_heif
-except ImportError:
-    pillow_heif = None
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
@@ -22,10 +18,6 @@ from age_prediction.services.errors import (
     NoFacesFoundError,
     InferenceOOMError,
 )
-
-
-if pillow_heif is not None:
-    pillow_heif.register_heif_opener()
 
 # shouldnt store permanent data in session (like forever, so just like their name is ok)
 MAX_CONTENT_LENGTH_MB = 10
