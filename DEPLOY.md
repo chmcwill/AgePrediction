@@ -10,6 +10,26 @@ python -m http.server 8000
 http://localhost:8000/static/index.html
 ```
 
+## Local backend + frontend (Flask)
+Use the helper script to set env vars, update `static/config.json`, start the static server, and run the backend:
+
+```powershell
+.\scripts\dev_local.ps1
+```
+
+Optional local-only mode (skip S3, store uploads/results in `tmp/`):
+
+```powershell
+.\scripts\dev_local.ps1 -LocalStorage
+```
+
+Notes:
+- The script reads `region` + `BucketPrefix` from `deploy.config.json`.
+- It derives bucket names using your AWS account id; pass `-AccountId` if needed.
+- Use `-UseFlaskCli` to run via `flask run` instead of `python age_prediction/app.py`.
+- Use `-SkipUpdateConfig` if you want to keep `static/config.json` unchanged.
+- Local storage mode bypasses S3 and uses `/api/upload/...` for the PUT step.
+
 ## Build + Deploy
 1) Build and push the Lambda image (manual ImageUri path):
 ```bash
@@ -24,8 +44,8 @@ Note: `aws ecr create-repository` is a one-time setup; skip it after the repo ex
 2) All-in-one reset + deploy (run after step 1):
 ```powershell
 .\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:<tag> #base
-.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v3 -SkipDelete -OpenFrontend #if updated backend
-.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v3 -SkipDelete -SkipDeployStack -OpenFrontend #if updated frontend
+.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v4 -SkipDelete -OpenFrontend #if updated backend
+.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v4 -SkipDelete -SkipDeployStack -OpenFrontend #if updated frontend
 ```
 Notes:
 - This deletes the stack, empties the buckets, redeploys, updates `static/config.json`, syncs `static/`, and invalidates CloudFront.
