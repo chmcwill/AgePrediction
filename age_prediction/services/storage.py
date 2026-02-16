@@ -11,12 +11,12 @@ from werkzeug.utils import secure_filename
 
 from age_prediction.services.errors import StorageError
 
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp"}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 ALLOWED_MIME_PREFIXES = ("image/",)
 # Some clients (notably for HEIC/HEIF) report the content type as a generic octet-stream.
 # We still want to allow those when the extension is image-like, while rejecting other binaries.
-GENERIC_IMAGE_MIMETYPES = {"application/octet-stream"}
-GENERIC_MIME_EXTENSIONS = {".heic", ".heif"}
+GENERIC_IMAGE_MIMETYPES = set()
+GENERIC_MIME_EXTENSIONS = set()
 
 
 def _validate_upload(uploaded_file) -> None:

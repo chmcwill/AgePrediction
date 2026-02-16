@@ -129,7 +129,7 @@ aws cloudfront create-invalidation --distribution-id <CloudFrontDistributionId> 
 Use this when you need the CDN to serve updated files right away.
 
 ## HEIC/HEIF Uploads
-HEIC/HEIF files are converted to JPG in the browser via `heic2any` (CDN). The backend does not require `libheif` in Lambda, which keeps the image build simpler.
+HEIC/HEIF files are converted to JPG in the browser via a vendored `heic2any` script in `static/js/heic2any.min.js` (no CDN dependency). The backend does not require `libheif` in Lambda, which keeps the image build simpler.
 
 ## Quick Cold Start Test
 To force a cold start without rebuilding/pushing an image, bump the Lambda timeout (or any config value).
