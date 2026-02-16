@@ -46,11 +46,27 @@ html, body {
     border: 1px solid #1558b3;
     border-radius: 4px;
     padding: 6px 14px;
+    height: 36px;
+    line-height: 22px;
+    box-sizing: border-box;
+    box-shadow: none;
+    outline: none;
+    appearance: none;
 }
 
 #submitBtn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+input[type="file"] {
+    border: 1px solid #d0d7de;
+    border-radius: 4px;
+    padding: 6px 10px;
+    background: #fff;
+    height: 36px;
+    line-height: 22px;
+    box-sizing: border-box;
 }
 
 .results-intro {
@@ -63,7 +79,7 @@ html, body {
 }
 
 .upload-form p {
-    margin: 0.35em 0;
+    margin: 0.25em 0;
 }
 
 .upload-form h3 {
@@ -136,6 +152,93 @@ img {
 
 .inner {
     text-align: left;
+}
+
+.file-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.file-input-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.file-button {
+    display: inline-block;
+    background-color: #fff;
+    color: #1a1a1a;
+    border: 1px solid #d0d7de;
+    border-radius: 4px;
+    padding: 6px 12px;
+    cursor: pointer;
+    height: 36px;
+    line-height: 22px;
+}
+
+.file-button:hover {
+    background-color: #f6f8fa;
+}
+
+.file-name {
+    color: #444;
+    font-size: 0.95rem;
+}
+
+.upload-actions {
+    margin-top: 6px;
+}
+
+.results-actions {
+    text-align: center;
+    margin: 6px 0 6px;
+}
+
+.try-another-btn {
+    background-color: #f6f8fa;
+    color: #1a1a1a;
+    border: 1px solid #d0d7de;
+    border-radius: 4px;
+    padding: 6px 12px;
+    cursor: pointer;
+    height: 36px;
+    line-height: 22px;
+}
+
+.try-another-btn:hover {
+    background-color: #eef1f4;
+}
+
+.upload-card {
+    background: #fff;
+    border: 1px solid #e6e6e6;
+    border-radius: 10px;
+    padding: 12px 16px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+}
+
+.preview-section {
+    margin: 8px 0 4px;
+    text-align: center;
+}
+
+.preview-image {
+    display: inline-block;
+    max-width: 140px;
+    max-height: 140px;
+    width: auto;
+    height: auto;
+    border-radius: 8px;
+    border: 1px solid #ddd;
 }
 
 .footer-wrap {

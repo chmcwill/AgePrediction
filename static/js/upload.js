@@ -11,11 +11,16 @@
   const statusMessage = document.getElementById("statusMessage");
   const warmupMessage = document.getElementById("warmupMessage");
   const buildVersion = document.getElementById("buildVersion");
+  const fileName = document.getElementById("fileName");
+  const previewSection = document.getElementById("previewSection");
+  const previewImage = document.getElementById("previewImage");
+  const uploadSection = document.getElementById("uploadSection");
   const resultsSection = document.getElementById("resultsSection");
   const bigResultsText = document.getElementById("bigResultsText");
   const resultImages = document.getElementById("resultImages");
   const smallResultsText = document.getElementById("smallResultsText");
   const tryAnotherBtn = document.getElementById("tryAnotherBtn");
+  const tryAnotherTopBtn = document.getElementById("tryAnotherTopBtn");
   let apiBase = window.AGE_PREDICT_API_BASE || document.body.dataset.apiBase || "";
   const API_TIMEOUT_MS = 28000;
   const WARMUP_TIMEOUT_MS = 28000;
@@ -48,6 +53,25 @@
     if (resultsSection) {
       resultsSection.style.display = "none";
     }
+    if (uploadSection) {
+      uploadSection.style.display = "";
+    }
+  };
+
+  const clearPreview = () => {
+    if (previewImage) {
+      previewImage.src = "";
+    }
+    if (previewSection) {
+      previewSection.classList.add("is-hidden");
+    }
+  };
+
+  const setFileName = (name) => {
+    if (!fileName) {
+      return;
+    }
+    fileName.textContent = name || "No file chosen";
   };
 
   const setWarmupMessage = (message) => {
@@ -67,6 +91,10 @@
   const showResults = (bigUrl, figUrls) => {
     if (!resultsSection || !resultImages) {
       return;
+    }
+    clearPreview();
+    if (uploadSection) {
+      uploadSection.style.display = "none";
     }
     resultImages.innerHTML = "";
     const smallUrls = figUrls || [];
@@ -229,11 +257,48 @@
 
   warmupApi();
 
+  if (fileInput) {
+    fileInput.addEventListener("change", async () => {
+      const selected = fileInput.files ? fileInput.files[0] : null;
+      setFileName(selected ? selected.name : "");
+      if (!selected || !previewSection || !previewImage) {
+        clearPreview();
+        return;
+      }
+      try {
+        let previewFile = selected;
+        if (isHeicFile(previewFile)) {
+          previewFile = await convertHeicToJpeg(previewFile);
+        }
+        const objectUrl = URL.createObjectURL(previewFile);
+        previewImage.src = objectUrl;
+        previewSection.classList.remove("is-hidden");
+        previewImage.onload = () => URL.revokeObjectURL(objectUrl);
+      } catch (_err) {
+        clearPreview();
+      }
+    });
+  }
+
   if (tryAnotherBtn) {
     tryAnotherBtn.addEventListener("click", () => {
       if (fileInput) {
         fileInput.value = "";
       }
+      setFileName("");
+      clearPreview();
+      clearResults();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }
+
+  if (tryAnotherTopBtn) {
+    tryAnotherTopBtn.addEventListener("click", () => {
+      if (fileInput) {
+        fileInput.value = "";
+      }
+      setFileName("");
+      clearPreview();
       clearResults();
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
