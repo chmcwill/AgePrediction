@@ -3,7 +3,7 @@
 Flask application entrypoint and factory for the age prediction demo.
 """
 
-from flask import Flask, redirect, url_for, render_template, request, session, flash, jsonify, send_from_directory
+from flask import Flask, url_for, request, jsonify, send_from_directory
 import os
 import gc
 import tempfile
@@ -21,7 +21,6 @@ from age_prediction.services.errors import (
     InvalidImageError,
     NoFacesFoundError,
     InferenceOOMError,
-    StorageError,
 )
 
 
@@ -32,7 +31,6 @@ if pillow_heif is not None:
 MAX_CONTENT_LENGTH_MB = 10
 max_mb = MAX_CONTENT_LENGTH_MB
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-TEMPLATE_FOLDER = os.path.join(ROOT_DIR, "templates")
 STATIC_FOLDER = os.path.join(ROOT_DIR, "static")
 MAX_CONTENT_LENGTH_B = MAX_CONTENT_LENGTH_MB * 1024 * 1024  #converted to bytes
 DEFAULT_UPLOAD_MAX_AGE_SECONDS = 6 * 60 * 60  # 6 hours
@@ -41,8 +39,7 @@ UPLOAD_FOLDER_MAX_TOTAL_BYTES = 50 * 1024 * 1024  # keep upload folder under 50 
 
 
 def create_app():
-    app = Flask(__name__, template_folder=TEMPLATE_FOLDER, static_folder=STATIC_FOLDER)
-    app.secret_key = 'hello'
+    app = Flask(__name__, static_folder=STATIC_FOLDER)
     app.config['UPLOAD_FOLDER'] = 'static/images'
     app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH_B
     app.config['UPLOAD_MAX_AGE_SECONDS'] = DEFAULT_UPLOAD_MAX_AGE_SECONDS
@@ -64,33 +61,8 @@ def create_app():
 
     @app.errorhandler(RequestEntityTooLarge)
     def handle_file_too_large(e):
-        """Handle oversized uploads (input: error; output: redirect response)."""
-        flash(f"File is too large. Maximum allowed size is {MAX_CONTENT_LENGTH_MB} MB.")
-        return redirect(url_for('home'))
-
-    @app.errorhandler(404)
-    def not_found_error(error):
-        """Render the 404 page (input: error; output: HTML response + status)."""
-        return render_template('404.html'), 404
-
-    @app.errorhandler(500)
-    def internal_error(error):
-        """Render the 500 page (input: error; output: HTML response + status)."""
-        return render_template('500.html'), 500
-
-    def _session_files():
-        """Collect current session file paths (input: session; output: list of paths)."""
-        files = []
-        if uploaded := session.get('uploaded_filename'):
-            files.append(uploaded)
-        files.extend(session.get('proc_images', []))
-        return files
-
-    @app.context_processor
-    def inject_api_base():
-        """Expose API base URL to templates (input: none; output: context dict)."""
-        # Expose API base URL to templates; static index.html uses the JS global.
-        return {"api_base_url": app.config.get("API_BASE_URL", "")}
+        """Handle oversized uploads (input: error; output: JSON response)."""
+        return jsonify({"error": "file_too_large", "message": f"Max {MAX_CONTENT_LENGTH_MB} MB."}), 413
 
     def _require_s3_config():
         """Validate S3 env vars (input: app config; output: error response or None)."""
@@ -122,93 +94,6 @@ def create_app():
         # Preflight response for browsers.
         return ("", 204)
 
-    @app.route("/", methods=["GET"])
-    def home():
-        """Render the upload page (input: session for cleanup; output: HTML response)."""
-        exclude_paths = _session_files()
-        storage.cleanup_stale_files(
-            app.config['UPLOAD_FOLDER'],
-            app.config['UPLOAD_MAX_AGE_SECONDS'],
-            app.config.get('UPLOAD_MAX_TOTAL_BYTES'),
-            exclude=exclude_paths,
-        )
-        return render_template("inputpage.html")
-
-    @app.route("/", methods=["POST"])
-    def upload_image():
-        """
-        Handle the upload form (input: multipart file; output: redirect response).
-        Saves the file locally, stores the path in session, then redirects to results.
-        """
-        # Clear prior session state and files before handling a new upload
-        storage.cleanup_files(_session_files())
-        session.pop('uploaded_filename', None)
-        session.pop('proc_images', None)
-
-        uploaded_file = request.files.get("file")
-        if not uploaded_file or uploaded_file.filename == "":
-            flash("Please choose an image before submitting.")
-            return redirect(url_for('home'))
-
-        try:
-            saved_path = storage.save_upload(uploaded_file, app.config['UPLOAD_FOLDER'])
-        except StorageError as exc:
-            flash(f"Image input unsuccessful: {exc}")
-            return redirect(url_for('home'))
-
-        session['uploaded_filename'] = saved_path
-        return redirect(url_for('resultspage'))
-
-    @app.route("/resultspage", methods=["GET"], endpoint="resultspage")
-    def resultspage():
-        """
-        Run inference and render results (input: session image path; output: HTML).
-        Reads the uploaded file path from session, runs prediction, then renders plots.
-        """
-        uploaded_filename = session.get('uploaded_filename')
-        if not uploaded_filename:
-            flash("You did not submit an image!")
-            return redirect(url_for('home'))
-
-        try:
-            # Lazy import to avoid loading torch/model code on routes that don't need inference.
-            from age_prediction.services.prediction import run_prediction
-            result, generated_files = run_prediction(uploaded_filename, app.config['UPLOAD_FOLDER'])
-        except InferenceOOMError:
-            flash('OOM Error: Picture was too large to process on this server. Please upload a smaller image.')
-            gc.collect()
-            return redirect(url_for('home'))
-        except (InvalidImageError, NoFacesFoundError) as e:
-            flash(f'Unable to use picture: {e}')
-            gc.collect()
-            return redirect(url_for('home'))
-
-        session['proc_images'] = generated_files
-        explainsmall = result.explainsmall
-        plt_big = result.plt_big
-        fig_paths = result.fig_paths
-        big_fig_path = result.big_fig_path
-        gc.collect()
-        return render_template("resultspage.html", figpath=fig_paths,
-                               bigfigpath=big_fig_path, pltbig=plt_big,
-                               explainsmall=explainsmall)
-
-    @app.route("/resultspage", methods=["POST"])
-    def reset_results():
-        """
-        Clear prior results (input: session; output: redirect response).
-        Removes generated files and resets session state to start a new upload.
-        """
-        storage.cleanup_files(_session_files())
-        session.pop('uploaded_filename', None)
-        session.pop('proc_images', None)
-        # Opportunistically prune the folder if it is over the configured cap.
-        storage.cleanup_stale_files(
-            app.config['UPLOAD_FOLDER'],
-            app.config['UPLOAD_MAX_AGE_SECONDS'],
-            app.config.get('UPLOAD_MAX_TOTAL_BYTES'),
-        )
-        return redirect(url_for('home'))
 
     @app.route("/api/presign", methods=["POST"])
     def presign_upload():

@@ -6,16 +6,11 @@ def test_app_configured(app):
     assert app.config["MAX_CONTENT_LENGTH"] == app_module.max_mb * 1024 * 1024
 
 
-def test_home_page_renders(client):
-    response = client.get("/")
+def test_health_endpoint(client):
+    response = client.get("/api/health")
     assert response.status_code == 200
-    assert b"<" in response.data  # basic HTML returned
-
-
-def test_resultspage_redirects_without_upload(client):
-    response = client.get("/resultspage", follow_redirects=False)
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/")
+    assert response.is_json
+    assert response.get_json().get("ok") is True
 
 
 def test_404_handler(client):
