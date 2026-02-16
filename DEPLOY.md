@@ -4,32 +4,6 @@
 - AWS CLI configured (`aws configure`) with access to create IAM, S3, Lambda, CloudFront.
 - Docker running (required to build the Lambda container image).
 
-## Quickly view UI change
-```
-python -m http.server 8000
-http://localhost:8000/static/index.html
-```
-
-## Local backend + frontend (Flask)
-Use the helper script to set env vars, update `static/config.json`, start the static server, and run the backend:
-
-```powershell
-.\scripts\dev_local.ps1
-```
-
-Optional local-only mode (skip S3, store uploads/results in `tmp/`):
-
-```powershell
-.\scripts\dev_local.ps1 -LocalStorage
-```
-
-Notes:
-- The script reads `region` + `BucketPrefix` from `deploy.config.json`.
-- It derives bucket names using your AWS account id; pass `-AccountId` if needed.
-- Use `-UseFlaskCli` to run via `flask run` instead of `python age_prediction/app.py`.
-- Use `-SkipUpdateConfig` if you want to keep `static/config.json` unchanged.
-- Local storage mode bypasses S3 and uses `/api/upload/...` for the PUT step.
-
 ## Build + Deploy
 1) Build and push the Lambda image (manual ImageUri path):
 ```bash
@@ -44,8 +18,8 @@ Note: `aws ecr create-repository` is a one-time setup; skip it after the repo ex
 2) All-in-one reset + deploy (run after step 1):
 ```powershell
 .\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:<tag> #base
-.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v4 -SkipDelete -OpenFrontend #if updated backend
-.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v4 -SkipDelete -SkipDeployStack -OpenFrontend #if updated frontend
+.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v5 -SkipDelete -OpenFrontend #if updated backend
+.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v5 -SkipDelete -SkipDeployStack -OpenFrontend #if updated frontend
 ```
 Notes:
 - This deletes the stack, empties the buckets, redeploys, updates `static/config.json`, syncs `static/`, and invalidates CloudFront.
@@ -98,16 +72,6 @@ You need:
 - `CloudFrontUrl`
 - `CloudFrontDistributionId` (for invalidations)
 
-## Configure the Frontend API URL
-The frontend now reads `static/config.json` for the API base URL.
-Run the helper script to update it after each deploy (API Gateway URL changes per stack):
-```powershell
-.\scripts\update_frontend.ps1 -StackName agepred-serverless
-```
-Use this when you only changed frontend config or API base.
-
-Note: `static/index.html` references `js/upload.js?v=1` for cache busting. When you
-change frontend JS, bump the query string value if you want browsers to fetch the new file.
 
 ## Upload the Static Site
 ```bash
@@ -128,8 +92,6 @@ aws cloudfront create-invalidation --distribution-id <CloudFrontDistributionId> 
 ```
 Use this when you need the CDN to serve updated files right away.
 
-## HEIC/HEIF Uploads
-HEIC/HEIF files are converted to JPG in the browser via a vendored `heic2any` script in `static/js/heic2any.min.js` (no CDN dependency). The backend does not require `libheif` in Lambda, which keeps the image build simpler.
 
 ## Quick Cold Start Test
 To force a cold start without rebuilding/pushing an image, bump the Lambda timeout (or any config value).
