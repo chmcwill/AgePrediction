@@ -13,6 +13,3 @@
   - No long-running HTTP request.
   - Better UX under cold start.
   - More production-like architecture for portfolio/hiring discussions.
-
-## Hardware speedups
-- raise ram in config to get more CPU, but need to make sure that its either better cpu or if its more threads that those threads are utilized.
