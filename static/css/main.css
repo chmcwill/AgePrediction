@@ -40,6 +40,19 @@ html, body {
     margin-left: 10px;
 }
 
+#submitBtn {
+    background-color: #1e6ee6;
+    color: #fff;
+    border: 1px solid #1558b3;
+    border-radius: 4px;
+    padding: 6px 14px;
+}
+
+#submitBtn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
 .results-intro {
     margin-top: 0.2cm;
     margin-bottom: 0.2cm;

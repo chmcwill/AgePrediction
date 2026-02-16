@@ -3,7 +3,7 @@
 Flask application entrypoint and factory for the age prediction demo.
 """
 
-from flask import Flask, redirect, url_for, render_template, request, session, flash, jsonify
+from flask import Flask, redirect, url_for, render_template, request, session, flash, jsonify, send_from_directory
 import os
 import gc
 import tempfile
@@ -13,6 +13,7 @@ try:
 except ImportError:
     pillow_heif = None
 from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.utils import secure_filename
 
 from age_prediction.services import storage
 from age_prediction.services import s3_storage
@@ -55,6 +56,11 @@ def create_app():
     app.config['S3_RESULT_URL_EXPIRES_SECONDS'] = int(os.environ.get("S3_RESULT_URL_EXPIRES_SECONDS", "3600"))
     # Allow browser JS to call the API when served from a static bucket/CloudFront.
     app.config['CORS_ALLOW_ORIGIN'] = os.environ.get("CORS_ALLOW_ORIGIN", "*")
+    app.config['LOCAL_STORAGE'] = os.environ.get("LOCAL_STORAGE", "").lower() in ("1", "true", "yes", "on")
+    app.config['LOCAL_STORAGE_DIR'] = os.environ.get(
+        "LOCAL_STORAGE_DIR",
+        os.path.join(ROOT_DIR, "tmp"),
+    )
 
     @app.errorhandler(RequestEntityTooLarge)
     def handle_file_too_large(e):
@@ -89,6 +95,8 @@ def create_app():
     def _require_s3_config():
         """Validate S3 env vars (input: app config; output: error response or None)."""
         # Fail fast if the function isn't wired to S3 buckets.
+        if app.config.get("LOCAL_STORAGE"):
+            return None
         missing = []
         if not app.config.get("S3_UPLOAD_BUCKET"):
             missing.append("S3_UPLOAD_BUCKET")
@@ -105,7 +113,7 @@ def create_app():
         if request.path.startswith("/api/"):
             response.headers["Access-Control-Allow-Origin"] = app.config["CORS_ALLOW_ORIGIN"]
             response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-            response.headers["Access-Control-Allow-Methods"] = "POST,OPTIONS"
+            response.headers["Access-Control-Allow-Methods"] = "POST,PUT,OPTIONS"
         return response
 
     @app.route("/api/<path:unused>", methods=["OPTIONS"])
@@ -206,14 +214,23 @@ def create_app():
     def presign_upload():
         """Create presigned PUT URL (input: JSON filename/content_type; output: JSON)."""
         # Returns a presigned URL so the browser uploads directly to S3.
-        if (err := _require_s3_config()) is not None:
-            return err
-
         payload = request.get_json(silent=True) or {}
         filename = payload.get("filename", "")
         content_type = payload.get("content_type") or "application/octet-stream"
         if not filename:
             return jsonify({"error": "filename_required"}), 400
+
+        if app.config.get("LOCAL_STORAGE"):
+            os.makedirs(app.config["LOCAL_STORAGE_DIR"], exist_ok=True)
+            safe_name = secure_filename(filename or "")
+            if safe_name == "":
+                safe_name = "upload"
+            key = f"uploads/{uuid.uuid4().hex}_{safe_name}"
+            url = url_for("local_upload", key=key, _external=True)
+            return jsonify({"url": url, "key": key, "expires_in": app.config["S3_PRESIGN_EXPIRES_SECONDS"]})
+
+        if (err := _require_s3_config()) is not None:
+            return err
 
         key = s3_storage.build_upload_key(filename)
         url = s3_storage.generate_presigned_put_url(
@@ -223,13 +240,26 @@ def create_app():
             expires_in=app.config["S3_PRESIGN_EXPIRES_SECONDS"],
             region=app.config.get("S3_REGION"),
         )
-        return jsonify(
-            {
-                "url": url,
-                "key": key,
-                "expires_in": app.config["S3_PRESIGN_EXPIRES_SECONDS"],
-            }
-        )
+        return jsonify({"url": url, "key": key, "expires_in": app.config["S3_PRESIGN_EXPIRES_SECONDS"]})
+
+    @app.route("/api/upload/<path:key>", methods=["PUT"])
+    def local_upload(key):
+        """Accept local dev uploads (input: raw body; output: JSON)."""
+        if not app.config.get("LOCAL_STORAGE"):
+            return jsonify({"error": "local_storage_disabled"}), 400
+        if not key:
+            return jsonify({"error": "key_required"}), 400
+        filename = os.path.basename(key)
+        if filename == "":
+            return jsonify({"error": "invalid_key"}), 400
+        os.makedirs(app.config["LOCAL_STORAGE_DIR"], exist_ok=True)
+        dest_path = os.path.join(app.config["LOCAL_STORAGE_DIR"], filename)
+        with open(dest_path, "wb") as handle:
+            handle.write(request.get_data())
+        if not os.path.exists(dest_path) or os.path.getsize(dest_path) == 0:
+            storage.cleanup_files([dest_path])
+            return jsonify({"error": "upload_failed"}), 500
+        return jsonify({"ok": True, "key": key})
 
     @app.route("/api/health", methods=["GET"])
     def health_check():
@@ -247,9 +277,6 @@ def create_app():
     def predict_from_s3():
         """Run inference on S3 upload (input: JSON key/request_id; output: JSON URLs)."""
         # Pulls the uploaded image from S3, runs inference, pushes results back to S3.
-        if (err := _require_s3_config()) is not None:
-            return err
-
         payload = request.get_json(silent=True) or {}
         key = payload.get("key")
         if not key:
@@ -264,6 +291,24 @@ def create_app():
         try:
             # Lazy import keeps /api/presign fast during cold starts.
             from age_prediction.services.prediction import run_prediction
+            if app.config.get("LOCAL_STORAGE"):
+                os.makedirs(app.config["LOCAL_STORAGE_DIR"], exist_ok=True)
+                filename = os.path.basename(key)
+                local_image = os.path.join(app.config["LOCAL_STORAGE_DIR"], filename)
+                if not os.path.exists(local_image):
+                    return jsonify({"error": "not_found", "message": "Upload not found."}), 404
+                result, generated_files = run_prediction(local_image, app.config["LOCAL_STORAGE_DIR"])
+
+                def _local_url(path):
+                    return url_for("local_results", filename=os.path.basename(path), _external=True)
+
+                big_fig_url = _local_url(result.big_fig_path) if result.big_fig_path else None
+                fig_urls = [_local_url(path) for path in result.fig_paths]
+                return jsonify({"request_id": request_id, "big_fig_url": big_fig_url, "fig_urls": fig_urls})
+
+            if (err := _require_s3_config()) is not None:
+                return err
+
             with tempfile.TemporaryDirectory(prefix="agepred_") as tmpdir:
                 # Lambda provides /tmp for scratch work; all outputs are uploaded to S3.
                 local_image = os.path.join(tmpdir, f"upload{suffix}")
@@ -331,6 +376,14 @@ def create_app():
             return jsonify({"error": "invalid_image", "message": str(exc)}), 400
         except Exception as exc:
             return jsonify({"error": "server_error", "message": str(exc)}), 500
+
+    @app.route("/local-results/<path:filename>")
+    def local_results(filename):
+        """Serve local dev results from LOCAL_STORAGE_DIR."""
+        if not app.config.get("LOCAL_STORAGE"):
+            return jsonify({"error": "local_storage_disabled"}), 400
+        safe_name = os.path.basename(filename)
+        return send_from_directory(app.config["LOCAL_STORAGE_DIR"], safe_name)
 
     return app
 
