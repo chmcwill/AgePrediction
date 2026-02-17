@@ -41,3 +41,16 @@ change frontend JS, bump the query string value if you want browsers to fetch th
 
 ## HEIC/HEIF Uploads
 HEIC/HEIF files are converted to JPG in the browser via a vendored `heic2any` script in `static/js/heic2any.min.js` (no CDN dependency). The backend does not require `libheif` in Lambda, which keeps the image build simpler.
+
+## Tests
+Unit tests:
+```bash
+python -m pytest -q
+```
+
+Integration tests (real models + real images):
+```bash
+python -m pytest -q -m integration
+```
+
+Note: Integration tests depend on `best_models/` weights and real face detection. They can be fragile if detector thresholds or model weights change, so expect occasional updates when the pipeline changes.

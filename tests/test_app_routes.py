@@ -214,3 +214,22 @@ def test_request_too_large_returns_413(app_local_storage):
     assert response.status_code == 413
     payload = response.get_json()
     assert payload["error"] == "file_too_large"
+
+
+def test_api_predict_invalid_key_returns_400(client_local_storage):
+    response = client_local_storage.post("/api/predict", json={"key": "bad/key.jpg"})
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "invalid_key"
+
+
+def test_api_predict_missing_file_returns_404(client_local_storage):
+    response = client_local_storage.post("/api/predict", json={"key": "uploads/missing.jpg"})
+    assert response.status_code == 404
+    assert response.get_json()["error"] == "not_found"
+
+
+def test_api_upload_empty_body_returns_500(client_local_storage):
+    response = client_local_storage.put("/api/upload/uploads/empty.jpg", data=b"")
+    assert response.status_code == 500
+    assert response.get_json()["error"] == "upload_failed"
+

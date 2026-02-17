@@ -48,3 +48,4 @@ def test_get_runtime_models_uses_cache(monkeypatch):
 
     assert first is second
     assert created["count"] == 3
+    models.get_runtime_models.cache_clear()
