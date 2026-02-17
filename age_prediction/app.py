@@ -20,7 +20,7 @@ from age_prediction.services.errors import (
 )
 
 # shouldnt store permanent data in session (like forever, so just like their name is ok)
-MAX_CONTENT_LENGTH_MB = 10
+MAX_CONTENT_LENGTH_MB = 1
 max_mb = MAX_CONTENT_LENGTH_MB
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 STATIC_FOLDER = os.path.join(ROOT_DIR, "static")
@@ -54,7 +54,12 @@ def create_app():
     @app.errorhandler(RequestEntityTooLarge)
     def handle_file_too_large(e):
         """Handle oversized uploads (input: error; output: JSON response)."""
-        return jsonify({"error": "file_too_large", "message": f"Max {MAX_CONTENT_LENGTH_MB} MB."}), 413
+        return jsonify(
+            {
+                "error": "file_too_large",
+                "message": f"File too large. Max size is {MAX_CONTENT_LENGTH_MB} MB.",
+            }
+        ), 413
 
     def _require_s3_config():
         """Validate S3 env vars (input: app config; output: error response or None)."""
@@ -67,7 +72,13 @@ def create_app():
         if not app.config.get("S3_RESULTS_BUCKET"):
             missing.append("S3_RESULTS_BUCKET")
         if missing:
-            return jsonify({"error": "s3_config_missing", "missing": missing}), 500
+            return jsonify(
+                {
+                    "error": "s3_config_missing",
+                    "message": "Server storage is not configured.",
+                    "missing": missing,
+                }
+            ), 500
         return None
 
     @app.after_request
@@ -95,7 +106,7 @@ def create_app():
         filename = payload.get("filename", "")
         content_type = payload.get("content_type") or "application/octet-stream"
         if not filename:
-            return jsonify({"error": "filename_required"}), 400
+            return jsonify({"error": "filename_required", "message": "Filename is required."}), 400
 
         if app.config.get("LOCAL_STORAGE"):
             os.makedirs(app.config["LOCAL_STORAGE_DIR"], exist_ok=True)
@@ -123,19 +134,21 @@ def create_app():
     def local_upload(key):
         """Accept local dev uploads (input: raw body; output: JSON)."""
         if not app.config.get("LOCAL_STORAGE"):
-            return jsonify({"error": "local_storage_disabled"}), 400
+            return jsonify(
+                {"error": "local_storage_disabled", "message": "Local storage is disabled."}
+            ), 400
         if not key:
-            return jsonify({"error": "key_required"}), 400
+            return jsonify({"error": "key_required", "message": "Upload key is required."}), 400
         filename = os.path.basename(key)
         if filename == "":
-            return jsonify({"error": "invalid_key"}), 400
+            return jsonify({"error": "invalid_key", "message": "Upload key is invalid."}), 400
         os.makedirs(app.config["LOCAL_STORAGE_DIR"], exist_ok=True)
         dest_path = os.path.join(app.config["LOCAL_STORAGE_DIR"], filename)
         with open(dest_path, "wb") as handle:
             handle.write(request.get_data())
         if not os.path.exists(dest_path) or os.path.getsize(dest_path) == 0:
             storage.cleanup_files([dest_path])
-            return jsonify({"error": "upload_failed"}), 500
+            return jsonify({"error": "upload_failed", "message": "Upload failed."}), 500
         return jsonify({"ok": True, "key": key})
 
     @app.route("/api/health", methods=["GET"])
@@ -157,9 +170,11 @@ def create_app():
         payload = request.get_json(silent=True) or {}
         key = payload.get("key")
         if not key:
-            return jsonify({"error": "key_required"}), 400
+            return jsonify({"error": "key_required", "message": "Upload key is required."}), 400
         if not str(key).startswith("uploads/"):
-            return jsonify({"error": "invalid_key", "message": "Key must start with uploads/."}), 400
+            return jsonify(
+                {"error": "invalid_key", "message": "Upload key must start with uploads/."}
+            ), 400
 
         # request_id scopes result object keys; caller can reuse for grouping.
         request_id = payload.get("request_id") or uuid.uuid4().hex
@@ -173,7 +188,9 @@ def create_app():
                 filename = os.path.basename(key)
                 local_image = os.path.join(app.config["LOCAL_STORAGE_DIR"], filename)
                 if not os.path.exists(local_image):
-                    return jsonify({"error": "not_found", "message": "Upload not found."}), 404
+                    return jsonify(
+                        {"error": "not_found", "message": "Uploaded file not found."}
+                    ), 404
                 result, generated_files = run_prediction(local_image, app.config["LOCAL_STORAGE_DIR"])
 
                 def _local_url(path):
@@ -246,19 +263,36 @@ def create_app():
         except InferenceOOMError:
             gc.collect()
             return jsonify(
-                {"error": "oom", "message": "Image too large to process on this server."}
+                {
+                    "error": "oom",
+                    "message": "Image too large to process. Try a smaller resolution.",
+                }
             ), 400
         except (InvalidImageError, NoFacesFoundError) as exc:
             gc.collect()
-            return jsonify({"error": "invalid_image", "message": str(exc)}), 400
+            return jsonify(
+                {
+                    "error": "invalid_image",
+                    "message": "No usable face detected. Try a clear, front-facing image.",
+                    "detail": str(exc),
+                }
+            ), 400
         except Exception as exc:
-            return jsonify({"error": "server_error", "message": str(exc)}), 500
+            return jsonify(
+                {
+                    "error": "server_error",
+                    "message": "Server error. Please try again in a moment.",
+                    "detail": str(exc),
+                }
+            ), 500
 
     @app.route("/local-results/<path:filename>")
     def local_results(filename):
         """Serve local dev results from LOCAL_STORAGE_DIR."""
         if not app.config.get("LOCAL_STORAGE"):
-            return jsonify({"error": "local_storage_disabled"}), 400
+            return jsonify(
+                {"error": "local_storage_disabled", "message": "Local storage is disabled."}
+            ), 400
         safe_name = os.path.basename(filename)
         return send_from_directory(app.config["LOCAL_STORAGE_DIR"], safe_name)
 
