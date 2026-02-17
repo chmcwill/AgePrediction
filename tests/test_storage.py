@@ -113,3 +113,37 @@ def test_cleanup_stale_files_respects_size_cap_and_excludes(tmp_path):
     assert not old_file.exists()
     assert mid_file.exists()
     assert keep_file.exists()
+
+
+def test_validate_upload_allows_generic_mimetype_with_extension(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "ALLOWED_EXTENSIONS", {".heic"})
+    monkeypatch.setattr(storage, "GENERIC_IMAGE_MIMETYPES", {"application/octet-stream"})
+    monkeypatch.setattr(storage, "GENERIC_MIME_EXTENSIONS", {".heic"})
+
+    upload = _DummyUpload("face.heic", "application/octet-stream")
+    dest = storage.save_upload(upload, str(tmp_path))
+    assert Path(dest).exists()
+
+
+def test_build_destination_handles_empty_base(tmp_path):
+    dest = storage._build_destination(str(tmp_path), "")
+    assert Path(dest).name.endswith("_upload")
+
+
+def test_enforce_size_cap_deletes_oldest(tmp_path):
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+
+    first = upload_dir / "a.jpg"
+    second = upload_dir / "b.jpg"
+    first.write_bytes(b"a" * 4)
+    second.write_bytes(b"b" * 4)
+
+    deleted_count, deleted_bytes = storage._enforce_size_cap(
+        str(upload_dir),
+        max_total_bytes=4,
+        exclude_set=set(),
+    )
+
+    assert deleted_count == 1
+    assert deleted_bytes == 4

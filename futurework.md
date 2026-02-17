@@ -13,3 +13,14 @@
   - No long-running HTTP request.
   - Better UX under cold start.
   - More production-like architecture for portfolio/hiring discussions.
+
+## Start computing as soon as the image is uploaded
+can just do the frontend image upload parts or also start the prediction run. 
+
+## Remove ticklabels from image plots
+
+## Remove tight_layout for faster compute
+
+## Get feedback from users on age, log to database
+
+## Build celeb, sportsstar, historical figure lookalike vector database

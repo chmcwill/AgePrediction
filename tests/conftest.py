@@ -40,3 +40,45 @@ def app(app_module):
 @pytest.fixture
 def client(app):
     return app.test_client()
+
+
+@pytest.fixture
+def fixtures_dir():
+    return os.path.join(os.path.dirname(__file__), "fixtures")
+
+
+@pytest.fixture
+def test_image_path(fixtures_dir):
+    return os.path.join(fixtures_dir, "test_image.jpg")
+
+
+@pytest.fixture
+def app_local_storage(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCAL_STORAGE", "true")
+    monkeypatch.setenv("LOCAL_STORAGE_DIR", str(tmp_path))
+    from age_prediction.app import create_app
+
+    app = create_app()
+    app.config["LOCAL_STORAGE_DIR"] = str(tmp_path)
+    return app
+
+
+@pytest.fixture
+def client_local_storage(app_local_storage):
+    return app_local_storage.test_client()
+
+
+@pytest.fixture
+def app_s3_storage(monkeypatch):
+    monkeypatch.setenv("LOCAL_STORAGE", "false")
+    monkeypatch.setenv("S3_UPLOAD_BUCKET", "test-upload-bucket")
+    monkeypatch.setenv("S3_RESULTS_BUCKET", "test-results-bucket")
+    monkeypatch.setenv("S3_REGION", "us-east-2")
+    from age_prediction.app import create_app
+
+    return create_app()
+
+
+@pytest.fixture
+def client_s3_storage(app_s3_storage):
+    return app_s3_storage.test_client()
