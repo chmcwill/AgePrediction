@@ -24,6 +24,8 @@
   let apiBase = window.AGE_PREDICT_API_BASE || document.body.dataset.apiBase || "";
   const API_TIMEOUT_MS = 28000;
   const WARMUP_TIMEOUT_MS = 28000;
+  const MAX_UPLOAD_MB = 10;
+  const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 
   // Inputs: isLoading (bool), message (string). Output: UI side effects only.
   const setLoading = (isLoading, message) => {
@@ -35,6 +37,12 @@
     }
     if (statusMessage) {
       statusMessage.textContent = message || "";
+    }
+  };
+
+  const setSubmitEnabled = (enabled) => {
+    if (submitBtn) {
+      submitBtn.disabled = !enabled;
     }
   };
 
@@ -148,8 +156,18 @@
         signal: controller.signal,
       });
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || "Request failed");
+        let payload;
+        try {
+          payload = await response.json();
+        } catch (_err) {
+          payload = null;
+        }
+        const message =
+          (payload && payload.message) || (payload && payload.error) || "Request failed";
+        const error = new Error(message);
+        error.status = response.status;
+        error.payload = payload;
+        throw error;
       }
       return response.json();
     } finally {
@@ -261,6 +279,16 @@
     fileInput.addEventListener("change", async () => {
       const selected = fileInput.files ? fileInput.files[0] : null;
       setFileName(selected ? selected.name : "");
+      if (!selected) {
+        setLoading(false, "");
+        setSubmitEnabled(false);
+      } else if (selected.size > MAX_UPLOAD_BYTES) {
+        setLoading(false, `File too large. Max size is ${MAX_UPLOAD_MB} MB.`);
+        setSubmitEnabled(false);
+      } else {
+        setLoading(false, "");
+        setSubmitEnabled(true);
+      }
       if (!selected || !previewSection || !previewImage) {
         clearPreview();
         return;
@@ -321,6 +349,10 @@
       setLoading(false, "Please choose an image before submitting.");
       return;
     }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setLoading(false, `File too large. Max size is ${MAX_UPLOAD_MB} MB.`);
+      return;
+    }
 
     try {
       if (isHeicFile(file)) {
@@ -368,6 +400,8 @@
           false,
           "HEIC conversion library failed to load. Please retry or upload a JPG/PNG instead."
         );
+      } else if (err && err.payload && err.payload.message) {
+        setLoading(false, err.payload.message);
       } else {
         setLoading(false, "Something went wrong. Please try again.");
       }
