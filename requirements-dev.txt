@@ -1,0 +1,2 @@
+-r requirements-lambda.txt
+pytest

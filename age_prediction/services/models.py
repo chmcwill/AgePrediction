@@ -15,6 +15,12 @@ from facenet_pytorch import InceptionResnetV1, MTCNN
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 BEST_MODELS_DIR = ROOT_DIR / "best_models"
+FACE_EMBEDDOR_WEIGHTS = "inception_resnet_v1_vggface2.pth"
+ENSEMBLE_WEIGHT_FILES = [
+    "FC_model_1792_classif_weights_agepred_bestval_personal_mae_5.406_bias_younger_Nov-04-2020.pt",
+    "FC_model_1792_classif_weights_agepred_bestval_personal_mae_5.266_bias_balanced_Nov-10-2020.pt",
+    "FC_model_1792_classif_weights_agepred_bestval_personal_mae_5.164_bias_balanced_Nov-10-2020.pt",
+]
 
 
 def _load_state_dict(filename: str, device: torch.device) -> dict:
@@ -53,7 +59,7 @@ class Facenet_Embeddor(torch.nn.Module):
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.resnet = InceptionResnetV1(pretrained=None, classify=True, num_classes=8631).eval().to(device)
-        self.resnet.load_state_dict(_load_state_dict("inception_resnet_v1_vggface2.pth", device=device))
+        self.resnet.load_state_dict(_load_state_dict(FACE_EMBEDDOR_WEIGHTS, device=device))
 
         features_list = list(self.resnet.children())
         self.embed_1792 = nn.Sequential(*features_list[:-4]).requires_grad_(False)
@@ -118,11 +124,7 @@ class Ensemble_Model(nn.Module):
         if model_list is None:
             # Prefer loading weights into a known architecture to avoid pickled modules.
             num_outputs = len(classes_tuple)
-            weight_files = [
-                "FC_model_1792_classif_weights_agepred_bestval_personal_mae_5.406_bias_younger_Nov-04-2020.pt",
-                "FC_model_1792_classif_weights_agepred_bestval_personal_mae_5.266_bias_balanced_Nov-10-2020.pt",
-                "FC_model_1792_classif_weights_agepred_bestval_personal_mae_5.164_bias_balanced_Nov-10-2020.pt",
-            ]
+            weight_files = ENSEMBLE_WEIGHT_FILES
             model_list = []
             for wf in weight_files:
                 state_dict = _load_state_dict(wf, device=device)
