@@ -147,3 +147,17 @@ def test_enforce_size_cap_deletes_oldest(tmp_path):
 
     assert deleted_count == 1
     assert deleted_bytes == 4
+
+
+def test_storage_rejects_invalid_mimetype(tmp_path):
+    class _DummyUpload:
+        def __init__(self, filename, mimetype):
+            self.filename = filename
+            self.mimetype = mimetype
+
+        def save(self, destination):
+            Path(destination).write_bytes(b"data")
+
+    upload = _DummyUpload("face.jpg", "text/plain")
+    with pytest.raises(StorageError):
+        storage.save_upload(upload, str(tmp_path))
