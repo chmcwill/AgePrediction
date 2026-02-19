@@ -17,6 +17,7 @@ migrations/
 *.jpg
 *.jpeg
 *.png
+!tests/fixtures/test_image.jpg
 
 #data
 static/images/
