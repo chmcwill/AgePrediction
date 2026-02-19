@@ -15,6 +15,7 @@ WORKDIR /var/task
 COPY age_prediction ./age_prediction
 COPY best_models ./best_models
 COPY lambda_handler.py ./
+COPY tests/fixtures/test_image.jpg ./tests/fixtures/test_image.jpg
 
 # Matplotlib cache in /tmp for Lambda (Lambda filesystem is ephemeral).
 ENV MPLCONFIGDIR=/tmp/matplotlib

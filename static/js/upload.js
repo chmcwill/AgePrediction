@@ -1,31 +1,38 @@
-(() => {
+import {
+  API_TIMEOUT_MS,
+  WARMUP_TIMEOUT_MS,
+  MAX_UPLOAD_MB,
+  MAX_UPLOAD_BYTES,
+  shouldRetryPredict,
+  isHeicFile,
+  convertHeicToJpeg,
+} from "./upload_helpers.js";
+
+export const initUpload = (options = {}) => {
+  const doc = options.root || document;
   // Browser flow: presign -> direct upload to S3 -> predict -> show results.
-  const form = document.getElementById("uploadForm");
+  const form = doc.getElementById("uploadForm");
   if (!form) {
     return;
   }
 
-  const fileInput = document.getElementById("fileInput");
-  const submitBtn = document.getElementById("submitBtn");
-  const spinner = document.getElementById("loadingSpinner");
-  const statusMessage = document.getElementById("statusMessage");
-  const warmupMessage = document.getElementById("warmupMessage");
-  const buildVersion = document.getElementById("buildVersion");
-  const fileName = document.getElementById("fileName");
-  const previewSection = document.getElementById("previewSection");
-  const previewImage = document.getElementById("previewImage");
-  const uploadSection = document.getElementById("uploadSection");
-  const resultsSection = document.getElementById("resultsSection");
-  const bigResultsText = document.getElementById("bigResultsText");
-  const resultImages = document.getElementById("resultImages");
-  const smallResultsText = document.getElementById("smallResultsText");
-  const tryAnotherBtn = document.getElementById("tryAnotherBtn");
-  const tryAnotherTopBtn = document.getElementById("tryAnotherTopBtn");
-  let apiBase = window.AGE_PREDICT_API_BASE || document.body.dataset.apiBase || "";
-  const API_TIMEOUT_MS = 28000;
-  const WARMUP_TIMEOUT_MS = 28000;
-  const MAX_UPLOAD_MB = 10;
-  const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+  const fileInput = doc.getElementById("fileInput");
+  const submitBtn = doc.getElementById("submitBtn");
+  const spinner = doc.getElementById("loadingSpinner");
+  const statusMessage = doc.getElementById("statusMessage");
+  const warmupMessage = doc.getElementById("warmupMessage");
+  const buildVersion = doc.getElementById("buildVersion");
+  const fileName = doc.getElementById("fileName");
+  const previewSection = doc.getElementById("previewSection");
+  const previewImage = doc.getElementById("previewImage");
+  const uploadSection = doc.getElementById("uploadSection");
+  const resultsSection = doc.getElementById("resultsSection");
+  const bigResultsText = doc.getElementById("bigResultsText");
+  const resultImages = doc.getElementById("resultImages");
+  const smallResultsText = doc.getElementById("smallResultsText");
+  const tryAnotherBtn = doc.getElementById("tryAnotherBtn");
+  const tryAnotherTopBtn = doc.getElementById("tryAnotherTopBtn");
+  let apiBase = window.AGE_PREDICT_API_BASE || doc.body.dataset.apiBase || "";
 
   // Inputs: isLoading (bool), message (string). Output: UI side effects only.
   const setLoading = (isLoading, message) => {
@@ -175,44 +182,6 @@
     }
   };
 
-  const shouldRetryPredict = (error) => {
-    const message = (error && error.message ? error.message : "").toLowerCase();
-    return (
-      message.includes("endpoint request timed out") ||
-      message.includes("timeout") ||
-      message.includes("internal server error") ||
-      message.includes("502") ||
-      message.includes("503") ||
-      message.includes("504")
-    );
-  };
-
-  const isHeicFile = (file) => {
-    if (!file) {
-      return false;
-    }
-    const name = (file.name || "").toLowerCase();
-    return (
-      file.type === "image/heic" ||
-      file.type === "image/heif" ||
-      name.endsWith(".heic") ||
-      name.endsWith(".heif")
-    );
-  };
-
-  const convertHeicToJpeg = async (file) => {
-    if (!window.heic2any) {
-      throw new Error("heic2any_not_loaded");
-    }
-    const blob = await window.heic2any({
-      blob: file,
-      toType: "image/jpeg",
-      quality: 0.9,
-    });
-    const newName = (file.name || "upload").replace(/\.(heic|heif)$/i, ".jpg");
-    return new File([blob], newName, { type: "image/jpeg" });
-  };
-
   const loadApiBaseFromConfig = async () => {
     if (apiBase && apiBase !== "__API_BASE_URL__") {
       return apiBase;
@@ -273,7 +242,9 @@
     }
   };
 
-  warmupApi();
+  if (options.autoWarmup !== false) {
+    warmupApi();
+  }
 
   if (fileInput) {
     fileInput.addEventListener("change", async () => {
@@ -409,4 +380,8 @@
       console.error(err);
     }
   });
-})();
+};
+
+if (typeof document !== "undefined" && !window.AGE_PREDICT_DISABLE_AUTO_INIT) {
+  initUpload();
+}

@@ -22,3 +22,10 @@ migrations/
 static/images/
 best_models/
 *.docx
+
+#packages
+node_modules/
+
+# frontend test artifacts
+playwright-report/
+test-results/

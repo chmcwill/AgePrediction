@@ -1,0 +1,17 @@
+﻿{
+  "name": "age-prediction-website",
+  "private": true,
+  "scripts": {
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "test:e2e": "playwright test",
+    "test:e2e:mocked": "playwright test tests/frontend/e2e/upload.e2e.spec.js",
+    "test:e2e:fullstack": "playwright test --grep \"full stack\"",
+    "test:e2e:install": "playwright install"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.2",
+    "jsdom": "28.1.0",
+    "vitest": "4.0.18"
+  }
+}
