@@ -111,6 +111,13 @@ Resources:
       DistributionConfig:
         Enabled: true
         DefaultRootObject: index.html
+        Aliases:
+          - facepredictionservice.com
+          - www.facepredictionservice.com
+        ViewerCertificate:
+          AcmCertificateArn: arn:aws:acm:us-east-1:555813168261:certificate/ba4acde9-face-4a53-8b5e-d13170320c85
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
         Origins:
           - Id: FrontendS3Origin
             DomainName: !GetAtt FrontendBucket.RegionalDomainName
