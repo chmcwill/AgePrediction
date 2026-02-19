@@ -6,6 +6,15 @@ const { test, expect } = require("@playwright/test");
 const localStorageDir = path.resolve(__dirname, "../../../tmp/e2e-fullstack");
 const repoRoot = path.resolve(__dirname, "../../../");
 const backendBase = "http://127.0.0.1:5001";
+const pythonExe =
+  process.env.PYTHON_EXE ||
+  (process.env.VIRTUAL_ENV
+    ? path.join(
+        process.env.VIRTUAL_ENV,
+        process.platform === "win32" ? "Scripts" : "bin",
+        "python"
+      )
+    : "python");
 let backendProcess;
 let backendReady = false;
 let backendStderr = "";
@@ -37,7 +46,7 @@ const waitForBackend = async (timeoutMs = 20000) => {
 test.beforeAll(async () => {
   cleanLocalStorageDir();
   backendProcess = spawn(
-    "python",
+    pythonExe,
     ["-m", "flask", "--app", "age_prediction.app", "run", "--host", "127.0.0.1", "--port", "5001"],
     {
       cwd: repoRoot,
@@ -59,7 +68,7 @@ test.beforeAll(async () => {
   if (!backendReady) {
     const details = backendStderr.trim() || "No stderr captured from backend process.";
     throw new Error(
-      `Full-stack backend failed to start at ${backendBase}. Ensure Flask is installed in the runner Python environment.\n${details}`
+      `Full-stack backend failed to start at ${backendBase} using '${pythonExe}'. Ensure Flask is installed in that Python environment.\n${details}`
     );
   }
 });
