@@ -198,7 +198,7 @@ Resources:
       Cors:
         AllowMethods: "'GET,POST,OPTIONS'"
         AllowHeaders: "'Content-Type'"
-        AllowOrigin: "'*'"
+        AllowOrigin: "'https://facepredictionservice.com,https://www.facepredictionservice.com'"
 
 Outputs:
   UploadBucketName:
