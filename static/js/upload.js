@@ -17,6 +17,7 @@ export const initUpload = (options = {}) => {
   }
 
   const fileInput = doc.getElementById("fileInput");
+  const fileButton = doc.querySelector("label[for='fileInput']");
   const submitBtn = doc.getElementById("submitBtn");
   const spinner = doc.getElementById("loadingSpinner");
   const statusMessage = doc.getElementById("statusMessage");
@@ -32,6 +33,7 @@ export const initUpload = (options = {}) => {
   const smallResultsText = doc.getElementById("smallResultsText");
   const tryAnotherBtn = doc.getElementById("tryAnotherBtn");
   const tryAnotherTopBtn = doc.getElementById("tryAnotherTopBtn");
+  let isSubmitting = false;
   let apiBase = window.AGE_PREDICT_API_BASE || doc.body.dataset.apiBase || "";
   const hasExplicitApiBase = () => Boolean(apiBase && apiBase !== "__API_BASE_URL__");
   const buildApiUrl = (path) => `${hasExplicitApiBase() ? apiBase : ""}${path}`;
@@ -53,6 +55,16 @@ export const initUpload = (options = {}) => {
     if (submitBtn) {
       submitBtn.disabled = !enabled;
     }
+  };
+
+  const setUploadControlsLocked = (locked) => {
+    if (fileInput) {
+      fileInput.disabled = locked;
+    }
+    if (fileButton) {
+      fileButton.style.display = locked ? "none" : "inline-block";
+    }
+    setSubmitEnabled(!locked);
   };
 
   // Input: none. Output: clears result DOM nodes.
@@ -276,6 +288,8 @@ export const initUpload = (options = {}) => {
       if (fileInput) {
         fileInput.value = "";
       }
+      isSubmitting = false;
+      setUploadControlsLocked(false);
       setFileName("");
       clearPreview();
       clearResults();
@@ -288,6 +302,8 @@ export const initUpload = (options = {}) => {
       if (fileInput) {
         fileInput.value = "";
       }
+      isSubmitting = false;
+      setUploadControlsLocked(false);
       setFileName("");
       clearPreview();
       clearResults();
@@ -297,16 +313,25 @@ export const initUpload = (options = {}) => {
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (isSubmitting) {
+      return;
+    }
+    isSubmitting = true;
+    setUploadControlsLocked(true);
     clearResults();
     await loadApiBaseFromConfig();
 
     let file = fileInput && fileInput.files ? fileInput.files[0] : null;
     if (!file) {
       setLoading(false, "Please choose an image before submitting.");
+      isSubmitting = false;
+      setUploadControlsLocked(false);
       return;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
       setLoading(false, `File too large. Max size is ${MAX_UPLOAD_MB} MB.`);
+      isSubmitting = false;
+      setUploadControlsLocked(false);
       return;
     }
 
@@ -363,6 +388,9 @@ export const initUpload = (options = {}) => {
       }
       // eslint-disable-next-line no-console
       console.error(err);
+    } finally {
+      isSubmitting = false;
+      setUploadControlsLocked(false);
     }
   });
 };
