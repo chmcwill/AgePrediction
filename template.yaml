@@ -21,6 +21,17 @@ Parameters:
   ImageUri:
     Type: String
     Description: ECR image URI (repo:tag or repo@digest) for PredictFunction.
+  ApiCustomDomainName:
+    Type: String
+    Default: api.facepredictionservice.com
+    Description: Optional custom domain for API Gateway (regional). Requires ApiCustomDomainCertificateArn.
+  ApiCustomDomainCertificateArn:
+    Type: String
+    Default: ""
+    Description: ACM certificate ARN in the stack region for ApiCustomDomainName.
+
+Conditions:
+  HasApiCustomDomain: !Not [!Equals [!Ref ApiCustomDomainCertificateArn, ""]]
 
 Resources:
   UploadBucket:
@@ -123,6 +134,19 @@ Resources:
             DomainName: !GetAtt FrontendBucket.RegionalDomainName
             S3OriginConfig: {}
             OriginAccessControlId: !GetAtt FrontendOriginAccessControl.Id
+          - Id: ApiOrigin
+            DomainName: !If
+              - HasApiCustomDomain
+              - !Ref ApiCustomDomainName
+              - !Sub "${AgePredApi}.execute-api.${AWS::Region}.amazonaws.com"
+            OriginPath: !If
+              - HasApiCustomDomain
+              - !Ref AWS::NoValue
+              - /Prod
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
         DefaultCacheBehavior:
           TargetOriginId: FrontendS3Origin
           ViewerProtocolPolicy: redirect-to-https
@@ -138,6 +162,36 @@ Resources:
             QueryString: false
             Cookies:
               Forward: none
+        CacheBehaviors:
+          - PathPattern: "api/*"
+            TargetOriginId: ApiOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS
+              - PATCH
+              - POST
+              - PUT
+            CachedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            Compress: true
+            MinTTL: 0
+            DefaultTTL: 0
+            MaxTTL: 0
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: none
+              Headers:
+                - Origin
+                - Access-Control-Request-Headers
+                - Access-Control-Request-Method
+                - Content-Type
+                - Accept
 
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -198,7 +252,27 @@ Resources:
       Cors:
         AllowMethods: "'GET,POST,OPTIONS'"
         AllowHeaders: "'Content-Type'"
-        AllowOrigin: "'https://facepredictionservice.com,https://www.facepredictionservice.com'"
+        AllowOrigin: "'https://facepredictionservice.com'"
+
+  ApiCustomDomain:
+    Type: AWS::ApiGateway::DomainName
+    Condition: HasApiCustomDomain
+    Properties:
+      DomainName: !Ref ApiCustomDomainName
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      RegionalCertificateArn: !Ref ApiCustomDomainCertificateArn
+      SecurityPolicy: TLS_1_2
+
+  ApiCustomDomainMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    Condition: HasApiCustomDomain
+    Properties:
+      DomainName: !Ref ApiCustomDomainName
+      RestApiId: !Ref AgePredApi
+      Stage: Prod
+      BasePath: api
 
 Outputs:
   UploadBucketName:
@@ -213,3 +287,6 @@ Outputs:
     Value: !Sub "https://${FrontendDistribution.DomainName}"
   CloudFrontDistributionId:
     Value: !Ref FrontendDistribution
+  ApiCustomDomainNameOutput:
+    Condition: HasApiCustomDomain
+    Value: !Ref ApiCustomDomainName

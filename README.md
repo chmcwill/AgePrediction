@@ -28,13 +28,10 @@ Notes:
 - Use `-SkipUpdateConfig` if you want to keep `static/config.json` unchanged.
 - Local storage mode bypasses S3 and uses `/api/upload/...` for the PUT step.
 
-## Configure the Frontend API URL
-The frontend reads `static/config.json` for the API base URL.
-Run the helper script to update it after each deploy (API Gateway URL changes per stack):
-```powershell
-.\scripts\update_frontend.ps1 -StackName agepred-serverless
-```
-Use this when you only changed frontend config or API base.
+## Frontend Config
+The frontend reads `static/config.json`.
+- In deployed mode, keep `apiBase` as `""` to use same-origin `/api/*` via CloudFront.
+- `scripts/redeploy_all.ps1` refreshes `buildVersion` during deploy.
 
 Note: `static/index.html` references `js/upload.js?v=1` for cache busting. When you
 change frontend JS, bump the query string value if you want browsers to fetch the new file.

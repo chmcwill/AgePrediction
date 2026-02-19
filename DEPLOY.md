@@ -17,15 +17,17 @@ Note: `aws ecr create-repository` is a one-time setup; skip it after the repo ex
 
 2) All-in-one reset + deploy (run after step 1):
 ```powershell
-.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:<tag> #base
-.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v6 -SkipDelete -OpenFrontend #if updated backend
-.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v6 -SkipDelete -SkipDeployStack -OpenFrontend #if updated frontend
+.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:<tag> -OpenFrontend #default (no stack delete)
+.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v6 -OpenFrontend #if backend or infra has changed
+.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v6 -SkipDeployStack -OpenFrontend #frontend-only
 ```
 Notes:
-- This deletes the stack, empties the buckets, redeploys, updates `static/config.json`, syncs `static/`, and invalidates CloudFront.
+- By default this does NOT delete the stack. It deploys, updates `static/config.json` (same-origin API + fresh build version), syncs `static/`, and invalidates CloudFront.
+- If you pass `-DeleteStack`, it empties the buckets, deletes the stack, then redeploys.
+- `static/config.json` now defaults to same-origin API calls (`apiBase: ""`), so frontend requests go to `/api/*` on the same host.
+- Use `-DeleteStack` only when the stack is stuck in `ROLLBACK_COMPLETE`/`DELETE_FAILED` or you changed immutable properties (like bucket names) that require replacement.
 - Add `-Force` to skip the destructive delete confirmation prompt.
-- Add `-SkipDelete` for most updates. You generally only need a full delete if the stack is stuck in `ROLLBACK_COMPLETE`/`DELETE_FAILED` or you changed immutable properties (like bucket names) that require replacement.
-- Add `-SkipFrontendUpdate` when only backend code changed.
+- Add `-SkipFrontendUpdate` when only backend code changed and you do not need to refresh `buildVersion`.
 - Add `-SkipFrontendSync` when only backend code changed.
 - Add `-SkipInvalidateCloudFront` if you want to avoid cache invalidations.
 - Add `-OpenFrontend` to open the CloudFront URL after deploy.
@@ -61,6 +63,8 @@ Note: We are not using `sam build`/`sam deploy` in this flow because SAM repeate
 for the image-based Lambda in this project (`PredictFunction`), which caused change-set validation failures.
 Building/pushing the image explicitly and deploying with CloudFormation + `ImageUri` is deterministic and reliable.
 Default deploy settings live in `deploy.config.json`.
+If you want CloudFront `/api/*` to route to a stable API custom domain (`api.facepredictionservice.com`), set `ApiCustomDomainCertificateArn` in `deploy.config.json` to a regional ACM cert ARN from `us-east-2` for that hostname.
+If `ApiCustomDomainCertificateArn` is blank, CloudFront routes `/api/*` directly to the stack execute-api endpoint.
 
 ## Get Stack Outputs
 ```bash
@@ -71,6 +75,20 @@ You need:
 - `FrontendBucketName`
 - `CloudFrontUrl`
 - `CloudFrontDistributionId` (for invalidations)
+- `ApiCustomDomainNameOutput` (only present when API custom domain is enabled)
+
+## Same-Origin API Routing
+The CloudFront distribution is configured to:
+- Serve static frontend from S3 by default.
+- Route `api/*` to the API origin.
+
+This lets the frontend call relative paths like `/api/predict` and avoid environment-specific API URL rewrites.
+
+To enable `api.facepredictionservice.com` as the API origin:
+1) Create an ACM cert in `us-east-2` for `api.facepredictionservice.com`.
+2) Set `ApiCustomDomainCertificateArn` in `deploy.config.json`.
+3) Deploy the stack.
+4) In Cloudflare DNS, add `CNAME` `api` -> the API Gateway regional domain shown in API Gateway custom domain details (`DNS only`).
 
 
 ## Upload the Static Site

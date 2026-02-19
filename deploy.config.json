@@ -8,6 +8,8 @@
     "FunctionMemorySize": "3008",
     "FunctionTimeout": "60",
     "PresignExpireSeconds": "600",
-    "ResultUrlExpireSeconds": "3600"
+    "ResultUrlExpireSeconds": "3600",
+    "ApiCustomDomainName": "api.facepredictionservice.com",
+    "ApiCustomDomainCertificateArn": ""
   }
 }
