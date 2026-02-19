@@ -18,8 +18,8 @@ Note: `aws ecr create-repository` is a one-time setup; skip it after the repo ex
 2) All-in-one reset + deploy (run after step 1):
 ```powershell
 .\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:<tag> #base
-.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v5 -SkipDelete -OpenFrontend #if updated backend
-.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v5 -SkipDelete -SkipDeployStack -OpenFrontend #if updated frontend
+.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v6 -SkipDelete -OpenFrontend #if updated backend
+.\scripts\redeploy_all.ps1 -ImageUri 555813168261.dkr.ecr.us-east-2.amazonaws.com/agepred-predict-age:v6 -SkipDelete -SkipDeployStack -OpenFrontend #if updated frontend
 ```
 Notes:
 - This deletes the stack, empties the buckets, redeploys, updates `static/config.json`, syncs `static/`, and invalidates CloudFront.
