@@ -33,6 +33,8 @@ export const initUpload = (options = {}) => {
   const tryAnotherBtn = doc.getElementById("tryAnotherBtn");
   const tryAnotherTopBtn = doc.getElementById("tryAnotherTopBtn");
   let apiBase = window.AGE_PREDICT_API_BASE || doc.body.dataset.apiBase || "";
+  const hasExplicitApiBase = () => Boolean(apiBase && apiBase !== "__API_BASE_URL__");
+  const buildApiUrl = (path) => `${hasExplicitApiBase() ? apiBase : ""}${path}`;
 
   // Inputs: isLoading (bool), message (string). Output: UI side effects only.
   const setLoading = (isLoading, message) => {
@@ -148,13 +150,10 @@ export const initUpload = (options = {}) => {
 
   // Inputs: path (string), body (object). Output: parsed JSON response.
   const postJson = async (path, body, timeoutMs = API_TIMEOUT_MS) => {
-    if (!apiBase) {
-      throw new Error("api_base_missing");
-    }
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(`${apiBase}${path}`, {
+      const response = await fetch(buildApiUrl(path), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -183,7 +182,7 @@ export const initUpload = (options = {}) => {
   };
 
   const loadApiBaseFromConfig = async () => {
-    if (apiBase && apiBase !== "__API_BASE_URL__") {
+    if (hasExplicitApiBase()) {
       return apiBase;
     }
     try {
@@ -192,8 +191,8 @@ export const initUpload = (options = {}) => {
         return apiBase;
       }
       const payload = await response.json();
-      if (payload && payload.apiBase) {
-        apiBase = payload.apiBase;
+      if (payload && Object.prototype.hasOwnProperty.call(payload, "apiBase")) {
+        apiBase = payload.apiBase || "";
       }
       if (payload && payload.buildVersion && buildVersion) {
         buildVersion.textContent = `Build: ${payload.buildVersion}`;
@@ -211,20 +210,13 @@ export const initUpload = (options = {}) => {
     if (submitBtn) {
       submitBtn.disabled = true;
     }
-    if (!apiBase || apiBase === "__API_BASE_URL__") {
-      setWarmupMessage("App is not configured with API URL yet. Check /static/config.json.");
-      if (submitBtn) {
-        submitBtn.disabled = false;
-      }
-      return;
-    }
     setWarmupMessage("Warming up the serverless container and model (cold start)...");
     const warmupFailedMessage =
       "Warmup failed. Serverless cold start may make the first request slower.";
     try {
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), WARMUP_TIMEOUT_MS);
-      const response = await fetch(`${apiBase}/api/health?deep=true`, {
+      const response = await fetch(buildApiUrl("/api/health?deep=true"), {
         cache: "no-store",
         signal: controller.signal,
       });
@@ -307,13 +299,6 @@ export const initUpload = (options = {}) => {
     event.preventDefault();
     clearResults();
     await loadApiBaseFromConfig();
-    if (!apiBase || apiBase === "__API_BASE_URL__") {
-      setLoading(
-        false,
-        "App is not configured with API URL yet. Ensure static/config.json is reachable at /static/config.json."
-      );
-      return;
-    }
 
     let file = fileInput && fileInput.files ? fileInput.files[0] : null;
     if (!file) {

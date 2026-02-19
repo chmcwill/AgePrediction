@@ -1,7 +1,7 @@
 param(
   [Parameter(Mandatory = $true)]
   [string]$ImageUri,
-  [switch]$SkipDelete,
+  [switch]$DeleteStack,
   [switch]$SkipFrontendUpdate,
   [switch]$Force,
   [switch]$OpenFrontend,
@@ -22,7 +22,7 @@ $stackName = $config.stack_name
 $region = $config.region
 $bucketPrefix = $config.parameters.BucketPrefix
 
-if (-not $SkipDelete) {
+if ($DeleteStack) {
   Write-Host "Emptying buckets before delete..."
   .\scripts\empty_buckets.ps1 -StackName $stackName -Region $region -BucketPrefix $bucketPrefix -Force:$Force
   Write-Host "Deleting stack '$stackName' in $region..."
@@ -31,6 +31,8 @@ if (-not $SkipDelete) {
   if ($LASTEXITCODE -ne 0) {
     throw "Stack deletion failed. Resolve DELETE_FAILED before redeploying."
   }
+} else {
+  Write-Host "Skipping stack deletion (default). Use -DeleteStack to force full reset."
 }
 
 if (-not $SkipDeployStack) {
@@ -39,8 +41,11 @@ if (-not $SkipDeployStack) {
 }
 
 if (-not $SkipFrontendUpdate) {
-  Write-Host "Updating frontend config.json with API base URL..."
-  .\scripts\update_frontend.ps1 -StackName $stackName
+  $configFile = "static/config.json"
+  $buildVersion = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+  $configContent = "{`n  `"apiBase`": `"`",`n  `"buildVersion`": `"$buildVersion`"`n}`n"
+  Set-Content -Path $configFile -Value $configContent -NoNewline
+  Write-Host "Updated $configFile with same-origin apiBase and buildVersion: $buildVersion"
 }
 
 if (-not $SkipFrontendSync) {
