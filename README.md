@@ -83,3 +83,48 @@ Run only full-stack e2e:
 ```bash
 npm run test:e2e:fullstack
 ```
+
+## GitHub CI/CD (Starter Setup)
+This repo now uses two GitHub Actions workflows:
+
+- `.github/workflows/ci.yml`
+  - Triggers on push (`dev`, `main`) and all pull requests.
+  - Runs backend tests (`pytest -m "not integration"`), frontend unit tests (`vitest`), and mocked Playwright e2e.
+- `.github/workflows/deploy-dev.yml`
+  - Manual trigger (`workflow_dispatch`) for controlled deploys.
+  - Builds/pushes `Dockerfile.lambda` to ECR, deploys `template.yaml`, syncs `static/`, invalidates CloudFront.
+
+### 1) Configure GitHub Variables
+Go to: `GitHub repo -> Settings -> Secrets and variables -> Actions -> Variables`
+
+Required:
+- `AWS_REGION` (example: `us-east-2`)
+- `AWS_ACCOUNT_ID` (your 12-digit AWS account id)
+- `ECR_REPOSITORY` (example: `agepred-predict-age`)
+
+Optional (defaults are baked into workflow):
+- `STACK_NAME` (default: `agepred-serverless`)
+- `BUCKET_PREFIX` (default: `agepred`)
+- `FUNCTION_MEMORY_SIZE` (default: `3008`)
+- `FUNCTION_TIMEOUT` (default: `60`)
+- `PRESIGN_EXPIRE_SECONDS` (default: `600`)
+- `RESULT_URL_EXPIRE_SECONDS` (default: `3600`)
+- `API_CUSTOM_DOMAIN_NAME` (default: `api.facepredictionservice.com`)
+- `API_CUSTOM_DOMAIN_CERT_ARN` (blank unless custom domain is enabled)
+
+### 2) Configure GitHub Secrets for AWS Auth
+Preferred (OIDC):
+- Add secret `AWS_ROLE_TO_ASSUME` with an IAM role ARN trusted by GitHub OIDC.
+
+Fallback (access keys):
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+
+### 3) How to use it
+- CI: open a PR or push to `dev`/`main`; checks run automatically in Actions.
+- CD: open `Actions -> Deploy Dev (Serverless) -> Run workflow` when you want to deploy.
+
+### 4) Recommended branch policy
+- Protect `main`.
+- Require `CI` workflow to pass before merge.
+- Keep deploys manual until you are comfortable, then optionally switch deploy trigger to push on `main` or `dev`.
