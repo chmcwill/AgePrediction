@@ -265,3 +265,74 @@ test("user can recover after a failure by resubmitting successfully", async ({ p
   await expect(page.locator("#resultsSection")).toBeVisible();
   await expect(page.locator("#resultImages img")).toHaveCount(2);
 });
+
+test("in-flight submit locks file chooser and ignores duplicate submit", async ({ page }) => {
+  await setupConfigRoute(page);
+  await page.route("http://api.local/api/health?deep=true", async (route) => {
+    await route.fulfill({ status: 200, body: "{}" });
+  });
+  let presignCalls = 0;
+  await page.route("http://api.local/api/presign", async (route) => {
+    presignCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ key: "key1", url: "http://upload.local/key1" }),
+    });
+  });
+  await page.route("http://upload.local/key1", async (route) => {
+    await route.fulfill({ status: 500, body: "" });
+  });
+  await gotoApp(page);
+
+  await page.locator("#fileInput").setInputFiles({
+    name: "face.jpg",
+    mimeType: "image/jpeg",
+    buffer: Buffer.from("x"),
+  });
+
+  await page.locator("#submitBtn").click();
+  await page.locator("#uploadForm").dispatchEvent("submit");
+
+  await expect(page.locator("#loadingSpinner")).toBeVisible();
+  await expect(page.locator("label[for='fileInput']")).toBeHidden();
+  await expect(page.locator("#fileInput")).toBeDisabled();
+  await expect(page.locator("#statusMessage")).toContainText("Something went wrong. Please try again.");
+  await expect(page.locator("label[for='fileInput']")).toBeVisible();
+  await expect(page.locator("#fileInput")).toBeEnabled();
+  expect(presignCalls).toBe(1);
+});
+
+test("same-origin config uses relative /api routes", async ({ page }) => {
+  await setupConfigRoute(page, "");
+  await page.route("**/api/health?deep=true", async (route) => {
+    await route.fulfill({ status: 200, body: "{}" });
+  });
+  await page.route("**/api/presign", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ key: "key1", url: "http://upload.local/key1" }),
+    });
+  });
+  await page.route("http://upload.local/key1", async (route) => {
+    await route.fulfill({ status: 200, body: "" });
+  });
+  await page.route("**/api/predict", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ big_fig_url: "http://cdn.local/big.png", fig_urls: [] }),
+    });
+  });
+  await gotoApp(page);
+
+  await page.locator("#fileInput").setInputFiles({
+    name: "face.jpg",
+    mimeType: "image/jpeg",
+    buffer: Buffer.from("x"),
+  });
+  await page.locator("#submitBtn").click();
+  await expect(page.locator("#resultsSection")).toBeVisible();
+});

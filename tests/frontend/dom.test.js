@@ -8,6 +8,7 @@ const renderDom = (apiBase = "http://example.com") => {
     <div id="resultsSection" style="display:none"></div>
     <form id="uploadForm">
       <input type="file" id="fileInput" />
+      <label for="fileInput">Choose File</label>
       <input type="submit" id="submitBtn" />
       <span id="loadingSpinner"></span>
       <p id="statusMessage"></p>
@@ -177,16 +178,26 @@ describe("upload DOM wiring", () => {
     expect(statusMessage.textContent).toContain("Please choose an image");
   });
 
-  it("submit with missing API base shows config error", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(mockFetchResponse(false, {}));
+  it("submit with same-origin apiBase uses relative /api path", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockFetchResponse(true, { apiBase: "", buildVersion: "test" }))
+      .mockResolvedValueOnce(mockFetchResponse(true, { key: "obj", url: "http://upload.local" }))
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce(mockFetchResponse(true, { fig_urls: [] }));
     await setup({ apiBase: "", autoWarmup: false, fetchMock });
     const form = document.getElementById("uploadForm");
-    const statusMessage = document.getElementById("statusMessage");
+    const fileInput = document.getElementById("fileInput");
 
+    setInputFiles(fileInput, [new File(["x"], "photo.jpg", { type: "image/jpeg" })]);
     form.dispatchEvent(new Event("submit"));
     await flushPromises();
 
-    expect(statusMessage.textContent).toContain("App is not configured with API URL yet");
+    expect(fetchMock).toHaveBeenCalledWith("./config.json", { cache: "no-store" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/presign",
+      expect.objectContaining({ method: "POST" })
+    );
   });
 
   it("submit with oversized file is blocked", async () => {
@@ -204,15 +215,17 @@ describe("upload DOM wiring", () => {
     expect(statusMessage.textContent).toContain("File too large");
   });
 
-  it("warmup with missing API base shows not configured message and re-enables submit", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(mockFetchResponse(false, {}));
+  it("warmup with same-origin apiBase calls relative health endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockFetchResponse(true, {}));
     await setup({ apiBase: "", autoWarmup: true, fetchMock });
     await flushPromises();
 
-    const warmupMessage = document.getElementById("warmupMessage");
     const submitBtn = document.getElementById("submitBtn");
-    expect(warmupMessage.textContent).toContain("App is not configured with API URL yet");
     expect(submitBtn.disabled).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/health?deep=true",
+      expect.objectContaining({ cache: "no-store" })
+    );
   });
 
   it("warmup disables and re-enables submit while calling health endpoint", async () => {
@@ -402,6 +415,7 @@ describe("upload DOM wiring", () => {
 
     const form = document.getElementById("uploadForm");
     const fileInput = document.getElementById("fileInput");
+    const fileButton = document.querySelector("label[for='fileInput']");
     const submitBtn = document.getElementById("submitBtn");
     const spinner = document.getElementById("loadingSpinner");
 
@@ -411,6 +425,8 @@ describe("upload DOM wiring", () => {
 
     expect(submitBtn.style.display).toBe("none");
     expect(spinner.style.display).toBe("inline-block");
+    expect(fileInput.disabled).toBe(true);
+    expect(fileButton.style.display).toBe("none");
 
     resolvePresign(mockFetchResponse(true, { key: "obj", url: "http://upload.local" }));
     await flushPromises();
@@ -418,6 +434,35 @@ describe("upload DOM wiring", () => {
 
     expect(submitBtn.style.display).toBe("inline-block");
     expect(spinner.style.display).toBe("none");
+    expect(fileInput.disabled).toBe(false);
+    expect(fileButton.style.display).toBe("inline-block");
     errorSpy.mockRestore();
+  });
+
+  it("ignores duplicate submit events while request is in flight", async () => {
+    let resolvePresign;
+    const presignPromise = new Promise((resolve) => {
+      resolvePresign = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => presignPromise)
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce(mockFetchResponse(true, { fig_urls: [] }));
+    await setup({ autoWarmup: false, fetchMock });
+
+    const form = document.getElementById("uploadForm");
+    const fileInput = document.getElementById("fileInput");
+
+    setInputFiles(fileInput, [new File(["x"], "photo.jpg", { type: "image/jpeg" })]);
+    form.dispatchEvent(new Event("submit"));
+    form.dispatchEvent(new Event("submit"));
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("http://example.com/api/presign");
+
+    resolvePresign(mockFetchResponse(true, { key: "obj", url: "http://upload.local" }));
+    await flushPromises();
   });
 });
