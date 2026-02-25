@@ -1,0 +1,19 @@
+name: CI Session 1
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  hello-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Show Python version
+        run: python --version
+
+      - name: Show Node version
+        run: node --version
