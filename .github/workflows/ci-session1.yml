@@ -17,3 +17,6 @@ jobs:
 
       - name: Show Node version
         run: node --version
+
+      - name: update status
+        run: echo "CI is running for PR #${{ github.event.pull_request.number }}"
