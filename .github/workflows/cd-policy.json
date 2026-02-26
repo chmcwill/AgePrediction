@@ -52,6 +52,17 @@
       "Resource": "arn:aws:lambda:us-east-2:555813168261:function:predict_age"
     },
     {
+      "Sid": "SsmUpdateLastKnownGoodPointers",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter"
+      ],
+      "Resource": [
+        "arn:aws:ssm:us-east-2:555813168261:parameter/agepred/prod/last_good_image_digest",
+        "arn:aws:ssm:us-east-2:555813168261:parameter/agepred/prod/last_good_commit_sha"
+      ]
+    },
+    {
       "Sid": "StaticSiteSync",
       "Effect": "Allow",
       "Action": [
