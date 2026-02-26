@@ -33,6 +33,14 @@
       "Resource": "*"
     },
     {
+      "Sid": "IamReadForLambdaRoleResolution",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole"
+      ],
+      "Resource": "arn:aws:iam::555813168261:role/agepred-serverless-*"
+    },
+    {
       "Sid": "StaticSiteSync",
       "Effect": "Allow",
       "Action": [
