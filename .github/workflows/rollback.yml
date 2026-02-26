@@ -1,0 +1,115 @@
+name: CD Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_uri_digest:
+        description: "ECR image URI digest to roll back to (example: 123456789012.dkr.ecr.us-east-2.amazonaws.com/repo@sha256:...)"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: cd-rollback-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  STACK_NAME: ${{ vars.STACK_NAME || 'agepred-serverless' }}
+  BUCKET_PREFIX: ${{ vars.BUCKET_PREFIX || 'agepred' }}
+  FUNCTION_MEMORY_SIZE: ${{ vars.FUNCTION_MEMORY_SIZE || '3008' }}
+  FUNCTION_TIMEOUT: ${{ vars.FUNCTION_TIMEOUT || '60' }}
+  PRESIGN_EXPIRE_SECONDS: ${{ vars.PRESIGN_EXPIRE_SECONDS || '600' }}
+  RESULT_URL_EXPIRE_SECONDS: ${{ vars.RESULT_URL_EXPIRE_SECONDS || '3600' }}
+  API_CUSTOM_DOMAIN_NAME: ${{ vars.API_CUSTOM_DOMAIN_NAME || 'api.facepredictionservice.com' }}
+  API_CUSTOM_DOMAIN_CERT_ARN: ${{ vars.API_CUSTOM_DOMAIN_CERT_ARN }}
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate rollback input
+        env:
+          IMAGE_URI_DIGEST: ${{ inputs.image_uri_digest }}
+        run: |
+          if [[ -z "$IMAGE_URI_DIGEST" ]]; then
+            echo "::error ::image_uri_digest input is required."
+            exit 1
+          fi
+          if [[ "$IMAGE_URI_DIGEST" != *"@sha256:"* ]]; then
+            echo "::error ::image_uri_digest must use digest format (repo@sha256:...)."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CD_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy rollback image to CloudFormation
+        env:
+          IMAGE_URI_DIGEST: ${{ inputs.image_uri_digest }}
+        run: |
+          PARAMS=(
+            "ImageUri=${IMAGE_URI_DIGEST}"
+            "BucketPrefix=${BUCKET_PREFIX}"
+            "FunctionMemorySize=${FUNCTION_MEMORY_SIZE}"
+            "FunctionTimeout=${FUNCTION_TIMEOUT}"
+            "PresignExpireSeconds=${PRESIGN_EXPIRE_SECONDS}"
+            "ResultUrlExpireSeconds=${RESULT_URL_EXPIRE_SECONDS}"
+            "ApiCustomDomainName=${API_CUSTOM_DOMAIN_NAME}"
+          )
+          if [ -n "${API_CUSTOM_DOMAIN_CERT_ARN}" ]; then
+            PARAMS+=("ApiCustomDomainCertificateArn=${API_CUSTOM_DOMAIN_CERT_ARN}")
+          else
+            PARAMS+=("ApiCustomDomainCertificateArn=")
+          fi
+
+          aws cloudformation deploy \
+            --template-file template.yaml \
+            --stack-name "$STACK_NAME" \
+            --capabilities CAPABILITY_IAM \
+            --region "$AWS_REGION" \
+            --parameter-overrides "${PARAMS[@]}"
+
+      - name: Update frontend config and sync static files
+        run: |
+          BUILD_VERSION="rollback-$(date -u +'%Y-%m-%dT%H:%M:%SZ')-${GITHUB_SHA::7}"
+          cat > static/config.json <<EOF
+          {
+            "apiBase": "",
+            "buildVersion": "${BUILD_VERSION}"
+          }
+          EOF
+
+          FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue | [0]" \
+            --output text)
+          if [ -z "$FRONTEND_BUCKET" ] || [ "$FRONTEND_BUCKET" = "None" ]; then
+            echo "::error ::Could not resolve FrontendBucketName from stack outputs."
+            exit 1
+          fi
+          aws s3 sync static "s3://$FRONTEND_BUCKET" --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue | [0]" \
+            --output text)
+          if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
+            echo "::error ::Could not resolve CloudFrontDistributionId from stack outputs."
+            exit 1
+          fi
+          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"

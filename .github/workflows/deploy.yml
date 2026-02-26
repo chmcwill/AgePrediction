@@ -1,0 +1,234 @@
+name: CD Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: cd-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  MODEL_BUCKET: ${{ vars.MODEL_BUCKET }}
+  MODEL_PREFIX: ${{ vars.MODEL_PREFIX }}
+
+jobs:
+  build-test-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      image_uri_digest: ${{ steps.resolve-image.outputs.image_uri_digest }}
+      aws_region: ${{ steps.load-config.outputs.aws_region }}
+      stack_name: ${{ steps.load-config.outputs.stack_name }}
+      bucket_prefix: ${{ steps.load-config.outputs.bucket_prefix }}
+      function_memory_size: ${{ steps.load-config.outputs.function_memory_size }}
+      function_timeout: ${{ steps.load-config.outputs.function_timeout }}
+      presign_expire_seconds: ${{ steps.load-config.outputs.presign_expire_seconds }}
+      result_url_expire_seconds: ${{ steps.load-config.outputs.result_url_expire_seconds }}
+      api_custom_domain_name: ${{ steps.load-config.outputs.api_custom_domain_name }}
+      api_custom_domain_cert_arn: ${{ steps.load-config.outputs.api_custom_domain_cert_arn }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load deploy config
+        id: load-config
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          cfg = json.loads(Path("deploy.config.json").read_text())
+          params = cfg.get("parameters", {})
+
+          out = Path(os.environ["GITHUB_OUTPUT"])
+          env = Path(os.environ["GITHUB_ENV"])
+
+          values = {
+              "aws_region": cfg["region"],
+              "stack_name": cfg["stack_name"],
+              "bucket_prefix": params["BucketPrefix"],
+              "function_memory_size": str(params["FunctionMemorySize"]),
+              "function_timeout": str(params["FunctionTimeout"]),
+              "presign_expire_seconds": str(params["PresignExpireSeconds"]),
+              "result_url_expire_seconds": str(params["ResultUrlExpireSeconds"]),
+              "api_custom_domain_name": str(params.get("ApiCustomDomainName", "")),
+              "api_custom_domain_cert_arn": str(params.get("ApiCustomDomainCertificateArn", "")),
+          }
+
+          with out.open("a", encoding="utf-8") as f:
+              for k, v in values.items():
+                  f.write(f"{k}={v}\n")
+
+          with env.open("a", encoding="utf-8") as f:
+              f.write(f"AWS_REGION={values['aws_region']}\n")
+          PY
+
+      - name: Validate required configuration
+        run: |
+          for var in AWS_ACCOUNT_ID ECR_REPOSITORY MODEL_BUCKET MODEL_PREFIX; do
+            if [ -z "${!var}" ]; then
+              echo "::error ::$var is not set. Add it as a repository variable."
+              exit 1
+            fi
+          done
+          if [ -z "${{ secrets.AWS_CD_ROLE_TO_ASSUME }}" ]; then
+            echo "::error ::AWS_CD_ROLE_TO_ASSUME is not set. Add it as a repository secret."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CD_ROLE_TO_ASSUME }}
+          aws-region: ${{ steps.load-config.outputs.aws_region }}
+
+      - name: Download model weights from S3
+        run: |
+          mkdir -p best_models
+          aws s3 sync "s3://${MODEL_BUCKET}/${MODEL_PREFIX}" best_models --delete
+
+      - name: Derive image tags
+        run: |
+          APP_VERSION=$(python3 - <<'PY'
+          import tomllib
+          with open("pyproject.toml", "rb") as f:
+              data = tomllib.load(f)
+          print(data["project"]["version"])
+          PY
+          )
+          if [ -z "$APP_VERSION" ]; then
+            echo "::error ::Could not read project.version from pyproject.toml."
+            exit 1
+          fi
+          SHORT_SHA="${GITHUB_SHA::7}"
+          SHA_TAG="sha-${SHORT_SHA}"
+          VERSION_TAG="v${APP_VERSION}"
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+          echo "SHA_TAG=$SHA_TAG" >> "$GITHUB_ENV"
+          echo "VERSION_TAG=$VERSION_TAG" >> "$GITHUB_ENV"
+
+      - name: Build Lambda image
+        run: |
+          IMAGE_URI_SHA="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${SHA_TAG}"
+          IMAGE_URI_VERSION="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${VERSION_TAG}"
+          docker build -f Dockerfile.lambda -t "$IMAGE_URI_SHA" .
+          docker tag "$IMAGE_URI_SHA" "$IMAGE_URI_VERSION"
+          echo "IMAGE_URI_SHA=$IMAGE_URI_SHA" >> "$GITHUB_ENV"
+          echo "IMAGE_URI_VERSION=$IMAGE_URI_VERSION" >> "$GITHUB_ENV"
+
+      - name: Run backend tests inside Docker image
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            "$IMAGE_URI_SHA" \
+            /bin/sh -lc "pip install --no-cache-dir pytest==8.2.2 && PYTHONPATH=/workspace python -m pytest -q -m 'not integration' && PYTHONPATH=/workspace python -m pytest -q -m integration"
+
+      - name: Push image to ECR
+        run: |
+          aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1 || \
+            aws ecr create-repository --repository-name "$ECR_REPOSITORY"
+          aws ecr get-login-password --region "$AWS_REGION" | \
+            docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          docker push "$IMAGE_URI_SHA"
+          docker push "$IMAGE_URI_VERSION"
+
+      - name: Resolve image digest for deploy
+        id: resolve-image
+        run: |
+          IMAGE_DIGEST=$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --region "$AWS_REGION" \
+            --image-ids imageTag="$SHA_TAG" \
+            --query "imageDetails[0].imageDigest" \
+            --output text)
+          if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "None" ]; then
+            echo "::error ::Could not resolve image digest for tag $SHA_TAG."
+            exit 1
+          fi
+          IMAGE_URI_DIGEST="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}@${IMAGE_DIGEST}"
+          echo "image_uri_digest=$IMAGE_URI_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "Resolved deploy image: $IMAGE_URI_DIGEST"
+          echo "Pushed tags: $SHA_TAG and $VERSION_TAG"
+
+  deploy:
+    needs: build-test-and-publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CD_ROLE_TO_ASSUME }}
+          aws-region: ${{ needs.build-test-and-publish.outputs.aws_region }}
+
+      - name: Deploy CloudFormation stack
+        run: |
+          PARAMS=(
+            "ImageUri=${{ needs.build-test-and-publish.outputs.image_uri_digest }}"
+            "BucketPrefix=${{ needs.build-test-and-publish.outputs.bucket_prefix }}"
+            "FunctionMemorySize=${{ needs.build-test-and-publish.outputs.function_memory_size }}"
+            "FunctionTimeout=${{ needs.build-test-and-publish.outputs.function_timeout }}"
+            "PresignExpireSeconds=${{ needs.build-test-and-publish.outputs.presign_expire_seconds }}"
+            "ResultUrlExpireSeconds=${{ needs.build-test-and-publish.outputs.result_url_expire_seconds }}"
+            "ApiCustomDomainName=${{ needs.build-test-and-publish.outputs.api_custom_domain_name }}"
+          )
+          if [ -n "${{ needs.build-test-and-publish.outputs.api_custom_domain_cert_arn }}" ]; then
+            PARAMS+=("ApiCustomDomainCertificateArn=${{ needs.build-test-and-publish.outputs.api_custom_domain_cert_arn }}")
+          else
+            PARAMS+=("ApiCustomDomainCertificateArn=")
+          fi
+
+          aws cloudformation deploy \
+            --template-file template.yaml \
+            --stack-name "${{ needs.build-test-and-publish.outputs.stack_name }}" \
+            --capabilities CAPABILITY_IAM \
+            --region "${{ needs.build-test-and-publish.outputs.aws_region }}" \
+            --parameter-overrides "${PARAMS[@]}"
+
+      - name: Update frontend config and sync static files
+        run: |
+          BUILD_VERSION="$(date -u +'%Y-%m-%dT%H:%M:%SZ')-${GITHUB_SHA::7}"
+          cat > static/config.json <<EOF
+          {
+            "apiBase": "",
+            "buildVersion": "${BUILD_VERSION}"
+          }
+          EOF
+
+          FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "${{ needs.build-test-and-publish.outputs.stack_name }}" \
+            --region "${{ needs.build-test-and-publish.outputs.aws_region }}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue | [0]" \
+            --output text)
+          if [ -z "$FRONTEND_BUCKET" ] || [ "$FRONTEND_BUCKET" = "None" ]; then
+            echo "::error ::Could not resolve FrontendBucketName from stack outputs."
+            exit 1
+          fi
+          aws s3 sync static "s3://$FRONTEND_BUCKET" --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${{ needs.build-test-and-publish.outputs.stack_name }}" \
+            --region "${{ needs.build-test-and-publish.outputs.aws_region }}" \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue | [0]" \
+            --output text)
+          if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
+            echo "::error ::Could not resolve CloudFrontDistributionId from stack outputs."
+            exit 1
+          fi
+          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
