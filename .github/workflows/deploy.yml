@@ -42,36 +42,8 @@ jobs:
       - name: Load deploy config
         id: load-config
         run: |
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          cfg = json.loads(Path("deploy.config.json").read_text())
-          params = cfg.get("parameters", {})
-
-          out = Path(os.environ["GITHUB_OUTPUT"])
-          env = Path(os.environ["GITHUB_ENV"])
-
-          values = {
-              "aws_region": cfg["region"],
-              "stack_name": cfg["stack_name"],
-              "bucket_prefix": params["BucketPrefix"],
-              "function_memory_size": str(params["FunctionMemorySize"]),
-              "function_timeout": str(params["FunctionTimeout"]),
-              "presign_expire_seconds": str(params["PresignExpireSeconds"]),
-              "result_url_expire_seconds": str(params["ResultUrlExpireSeconds"]),
-              "api_custom_domain_name": str(params.get("ApiCustomDomainName", "")),
-              "api_custom_domain_cert_arn": str(params.get("ApiCustomDomainCertificateArn", "")),
-          }
-
-          with out.open("a", encoding="utf-8") as f:
-              for k, v in values.items():
-                  f.write(f"{k}={v}\n")
-
-          with env.open("a", encoding="utf-8") as f:
-              f.write(f"AWS_REGION={values['aws_region']}\n")
-          PY
+          python3 scripts/load_deploy_config.py --emit deploy-outputs >> "$GITHUB_OUTPUT"
+          python3 scripts/load_deploy_config.py --emit aws-region-env >> "$GITHUB_ENV"
 
       - name: Validate required configuration
         run: |
