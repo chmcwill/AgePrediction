@@ -1,9 +1,18 @@
-name: CI Session 2
+name: CI
 
 on:
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - "README.md"
+      - "DEPLOY.md"
+      - "future_work.md"
+      - "docs/**"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -12,6 +21,7 @@ permissions:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,6 +45,7 @@ jobs:
 
   backend-integration-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,6 +87,7 @@ jobs:
 
   frontend-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -96,3 +108,13 @@ jobs:
 
       - name: Run mocked E2E
         run: npm run test:e2e:mocked
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
