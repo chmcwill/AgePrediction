@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "age-prediction-website"
+version = "0.1.0"
+description = "Age Prediction Website (serverless frontend + Lambda backend)"
+readme = "README.md"
+requires-python = ">=3.11"

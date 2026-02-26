@@ -4,6 +4,10 @@ on:
   pull_request:
     branches:
       - main
+    types:
+      - ready_for_review
+      - synchronize
+      - reopened
     paths-ignore:
       - "README.md"
       - "DEPLOY.md"
@@ -20,6 +24,7 @@ permissions:
 
 jobs:
   backend-tests:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -44,6 +49,7 @@ jobs:
         run: python -m pytest -q -m "not integration"
 
   backend-integration-tests:
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -86,6 +92,7 @@ jobs:
         run: python -m pytest -q -m integration
 
   frontend-tests:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
