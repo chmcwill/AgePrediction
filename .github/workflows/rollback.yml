@@ -5,8 +5,13 @@ on:
     inputs:
       image_uri_digest:
         description: "ECR image URI digest to roll back to (example: 123456789012.dkr.ecr.us-east-2.amazonaws.com/repo@sha256:...)"
-        required: true
+        required: false
         type: string
+      use_last_good:
+        description: "Use SSM last-known-good image digest"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   id-token: write
@@ -17,15 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
-  STACK_NAME: ${{ vars.STACK_NAME || 'agepred-serverless' }}
-  BUCKET_PREFIX: ${{ vars.BUCKET_PREFIX || 'agepred' }}
-  FUNCTION_MEMORY_SIZE: ${{ vars.FUNCTION_MEMORY_SIZE || '3008' }}
-  FUNCTION_TIMEOUT: ${{ vars.FUNCTION_TIMEOUT || '60' }}
-  PRESIGN_EXPIRE_SECONDS: ${{ vars.PRESIGN_EXPIRE_SECONDS || '600' }}
-  RESULT_URL_EXPIRE_SECONDS: ${{ vars.RESULT_URL_EXPIRE_SECONDS || '3600' }}
-  API_CUSTOM_DOMAIN_NAME: ${{ vars.API_CUSTOM_DOMAIN_NAME || 'api.facepredictionservice.com' }}
-  API_CUSTOM_DOMAIN_CERT_ARN: ${{ vars.API_CUSTOM_DOMAIN_CERT_ARN }}
+  SSM_LAST_GOOD_IMAGE_PARAM: ${{ vars.SSM_LAST_GOOD_IMAGE_PARAM || '/agepred/prod/last_good_image_digest' }}
 
 jobs:
   rollback:
@@ -35,18 +32,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate rollback input
-        env:
-          IMAGE_URI_DIGEST: ${{ inputs.image_uri_digest }}
+      - name: Load deploy config
+        id: load-config
         run: |
-          if [[ -z "$IMAGE_URI_DIGEST" ]]; then
-            echo "::error ::image_uri_digest input is required."
-            exit 1
-          fi
-          if [[ "$IMAGE_URI_DIGEST" != *"@sha256:"* ]]; then
-            echo "::error ::image_uri_digest must use digest format (repo@sha256:...)."
-            exit 1
-          fi
+          python3 scripts/load_deploy_config.py --emit deploy-outputs >> "$GITHUB_OUTPUT"
+          python3 scripts/load_deploy_config.py --emit aws-region-env >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -54,28 +44,49 @@ jobs:
           role-to-assume: ${{ secrets.AWS_CD_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy rollback image to CloudFormation
+      - name: Resolve rollback image digest
         env:
-          IMAGE_URI_DIGEST: ${{ inputs.image_uri_digest }}
+          INPUT_IMAGE_URI_DIGEST: ${{ inputs.image_uri_digest }}
+          USE_LAST_GOOD: ${{ inputs.use_last_good }}
+        run: |
+          if [ "$USE_LAST_GOOD" = "true" ]; then
+            IMAGE_URI_DIGEST=$(aws ssm get-parameter \
+              --name "${SSM_LAST_GOOD_IMAGE_PARAM}" \
+              --query "Parameter.Value" \
+              --output text)
+            if [ -z "$IMAGE_URI_DIGEST" ] || [ "$IMAGE_URI_DIGEST" = "None" ]; then
+              echo "::error ::No SSM last-known-good image found at ${SSM_LAST_GOOD_IMAGE_PARAM}."
+              exit 1
+            fi
+          else
+            IMAGE_URI_DIGEST="$INPUT_IMAGE_URI_DIGEST"
+          fi
+          if [[ -z "$IMAGE_URI_DIGEST" || "$IMAGE_URI_DIGEST" != *"@sha256:"* ]]; then
+            echo "::error ::Rollback image must be in digest format (repo@sha256:...)."
+            exit 1
+          fi
+          echo "IMAGE_URI_DIGEST=$IMAGE_URI_DIGEST" >> "$GITHUB_ENV"
+
+      - name: Deploy rollback image to CloudFormation
         run: |
           PARAMS=(
             "ImageUri=${IMAGE_URI_DIGEST}"
-            "BucketPrefix=${BUCKET_PREFIX}"
-            "FunctionMemorySize=${FUNCTION_MEMORY_SIZE}"
-            "FunctionTimeout=${FUNCTION_TIMEOUT}"
-            "PresignExpireSeconds=${PRESIGN_EXPIRE_SECONDS}"
-            "ResultUrlExpireSeconds=${RESULT_URL_EXPIRE_SECONDS}"
-            "ApiCustomDomainName=${API_CUSTOM_DOMAIN_NAME}"
+            "BucketPrefix=${{ steps.load-config.outputs.bucket_prefix }}"
+            "FunctionMemorySize=${{ steps.load-config.outputs.function_memory_size }}"
+            "FunctionTimeout=${{ steps.load-config.outputs.function_timeout }}"
+            "PresignExpireSeconds=${{ steps.load-config.outputs.presign_expire_seconds }}"
+            "ResultUrlExpireSeconds=${{ steps.load-config.outputs.result_url_expire_seconds }}"
+            "ApiCustomDomainName=${{ steps.load-config.outputs.api_custom_domain_name }}"
           )
-          if [ -n "${API_CUSTOM_DOMAIN_CERT_ARN}" ]; then
-            PARAMS+=("ApiCustomDomainCertificateArn=${API_CUSTOM_DOMAIN_CERT_ARN}")
+          if [ -n "${{ steps.load-config.outputs.api_custom_domain_cert_arn }}" ]; then
+            PARAMS+=("ApiCustomDomainCertificateArn=${{ steps.load-config.outputs.api_custom_domain_cert_arn }}")
           else
             PARAMS+=("ApiCustomDomainCertificateArn=")
           fi
 
           aws cloudformation deploy \
             --template-file template.yaml \
-            --stack-name "$STACK_NAME" \
+            --stack-name "${{ steps.load-config.outputs.stack_name }}" \
             --capabilities CAPABILITY_IAM \
             --region "$AWS_REGION" \
             --parameter-overrides "${PARAMS[@]}"
@@ -91,7 +102,7 @@ jobs:
           EOF
 
           FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name "$STACK_NAME" \
+            --stack-name "${{ steps.load-config.outputs.stack_name }}" \
             --region "$AWS_REGION" \
             --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue | [0]" \
             --output text)
@@ -104,7 +115,7 @@ jobs:
       - name: Invalidate CloudFront cache
         run: |
           DIST_ID=$(aws cloudformation describe-stacks \
-            --stack-name "$STACK_NAME" \
+            --stack-name "${{ steps.load-config.outputs.stack_name }}" \
             --region "$AWS_REGION" \
             --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue | [0]" \
             --output text)
