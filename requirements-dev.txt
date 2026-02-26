@@ -1,2 +1,2 @@
 -r requirements-lambda.txt
-pytest
+pytest==8.2.2
