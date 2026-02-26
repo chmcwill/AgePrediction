@@ -19,6 +19,9 @@ env:
   ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
   MODEL_BUCKET: ${{ vars.MODEL_BUCKET }}
   MODEL_PREFIX: ${{ vars.MODEL_PREFIX }}
+  DEPLOY_HISTORY_BUCKET: ${{ vars.DEPLOY_HISTORY_BUCKET }}
+  SSM_LAST_GOOD_IMAGE_PARAM: ${{ vars.SSM_LAST_GOOD_IMAGE_PARAM || '/agepred/prod/last_good_image_digest' }}
+  SSM_LAST_GOOD_COMMIT_PARAM: ${{ vars.SSM_LAST_GOOD_COMMIT_PARAM || '/agepred/prod/last_good_commit_sha' }}
 
 jobs:
   build-test-and-publish:
@@ -101,10 +104,11 @@ jobs:
       - name: Run backend tests inside Docker image
         run: |
           docker run --rm \
+            --entrypoint /bin/sh \
             -v "${GITHUB_WORKSPACE}:/workspace" \
             -w /workspace \
             "$IMAGE_URI_SHA" \
-            /bin/sh -lc "pip install --no-cache-dir pytest==8.2.2 && PYTHONPATH=/workspace python -m pytest -q -m 'not integration' && PYTHONPATH=/workspace python -m pytest -q -m integration"
+            -lc "pip install --no-cache-dir pytest==8.2.2 && PYTHONPATH=/workspace python -m pytest -q -m 'not integration' && PYTHONPATH=/workspace python -m pytest -q -m integration"
 
       - name: Push image to ECR
         run: |
@@ -204,3 +208,76 @@ jobs:
             exit 1
           fi
           aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
+
+      - name: Health check deployed service
+        run: |
+          BASE_URL=$(aws cloudformation describe-stacks \
+            --stack-name "${{ needs.build-test-and-publish.outputs.stack_name }}" \
+            --region "${{ needs.build-test-and-publish.outputs.aws_region }}" \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontUrl'].OutputValue | [0]" \
+            --output text)
+          if [ -z "$BASE_URL" ] || [ "$BASE_URL" = "None" ]; then
+            echo "::error ::Could not resolve CloudFrontUrl from stack outputs."
+            exit 1
+          fi
+          HEALTH_URL="${BASE_URL%/}/api/health"
+          echo "Health URL: $HEALTH_URL"
+          for i in {1..20}; do
+            if curl -fsS "$HEALTH_URL" >/dev/null; then
+              echo "Health check passed on attempt $i."
+              echo "DEPLOY_BASE_URL=$BASE_URL" >> "$GITHUB_ENV"
+              echo "DEPLOY_HEALTH_URL=$HEALTH_URL" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "Health check attempt $i failed, retrying..."
+            sleep 10
+          done
+          echo "::error ::Health check failed after retries: $HEALTH_URL"
+          exit 1
+
+      - name: Record deployment metadata
+        run: |
+          TIMESTAMP="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          mkdir -p deploy-metadata
+          cat > deploy-metadata/deploy-result.json <<EOF
+          {
+            "timestamp": "${TIMESTAMP}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_number": "${GITHUB_RUN_NUMBER}",
+            "repository": "${GITHUB_REPOSITORY}",
+            "commit_sha": "${GITHUB_SHA}",
+            "image_uri_digest": "${{ needs.build-test-and-publish.outputs.image_uri_digest }}",
+            "stack_name": "${{ needs.build-test-and-publish.outputs.stack_name }}",
+            "region": "${{ needs.build-test-and-publish.outputs.aws_region }}",
+            "base_url": "${DEPLOY_BASE_URL}",
+            "health_url": "${DEPLOY_HEALTH_URL}"
+          }
+          EOF
+          cat deploy-metadata/deploy-result.json
+
+      - name: Upload deployment metadata artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-metadata-${{ github.run_id }}
+          path: deploy-metadata/deploy-result.json
+
+      - name: Upload deployment metadata to S3 history (optional)
+        if: ${{ env.DEPLOY_HISTORY_BUCKET != '' }}
+        run: |
+          aws s3 cp \
+            deploy-metadata/deploy-result.json \
+            "s3://${DEPLOY_HISTORY_BUCKET}/deploy-history/${GITHUB_RUN_ID}-${GITHUB_SHA}.json"
+
+      - name: Update last-known-good deployment pointers
+        run: |
+          aws ssm put-parameter \
+            --name "${SSM_LAST_GOOD_IMAGE_PARAM}" \
+            --type String \
+            --overwrite \
+            --value "${{ needs.build-test-and-publish.outputs.image_uri_digest }}"
+          aws ssm put-parameter \
+            --name "${SSM_LAST_GOOD_COMMIT_PARAM}" \
+            --type String \
+            --overwrite \
+            --value "${GITHUB_SHA}"
