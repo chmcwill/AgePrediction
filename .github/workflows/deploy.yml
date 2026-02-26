@@ -153,6 +153,7 @@ jobs:
 
       - name: Deploy CloudFormation stack
         run: |
+          set -o pipefail
           PARAMS=(
             "ImageUri=${{ needs.build-test-and-publish.outputs.image_uri_digest }}"
             "BucketPrefix=${{ needs.build-test-and-publish.outputs.bucket_prefix }}"
@@ -168,12 +169,21 @@ jobs:
             PARAMS+=("ApiCustomDomainCertificateArn=")
           fi
 
-          aws cloudformation deploy \
+          if ! aws cloudformation deploy \
             --template-file template.yaml \
             --stack-name "${{ needs.build-test-and-publish.outputs.stack_name }}" \
             --capabilities CAPABILITY_IAM \
             --region "${{ needs.build-test-and-publish.outputs.aws_region }}" \
-            --parameter-overrides "${PARAMS[@]}"
+            --parameter-overrides "${PARAMS[@]}"; then
+            echo "::error ::CloudFormation deploy failed. Recent stack events:"
+            aws cloudformation describe-stack-events \
+              --stack-name "${{ needs.build-test-and-publish.outputs.stack_name }}" \
+              --region "${{ needs.build-test-and-publish.outputs.aws_region }}" \
+              --max-items 25 \
+              --query "StackEvents[].{Time:Timestamp,LogicalId:LogicalResourceId,Status:ResourceStatus,Reason:ResourceStatusReason}" \
+              --output table || true
+            exit 1
+          fi
 
       - name: Update frontend config and sync static files
         run: |
