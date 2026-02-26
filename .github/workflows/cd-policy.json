@@ -41,6 +41,17 @@
       "Resource": "arn:aws:iam::555813168261:role/agepred-serverless-*"
     },
     {
+      "Sid": "LambdaUpdatePredictFunction",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:UpdateFunctionCode",
+        "lambda:UpdateFunctionConfiguration"
+      ],
+      "Resource": "arn:aws:lambda:us-east-2:555813168261:function:predict_age"
+    },
+    {
       "Sid": "StaticSiteSync",
       "Effect": "Allow",
       "Action": [
