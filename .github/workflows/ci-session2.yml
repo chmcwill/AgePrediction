@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
@@ -16,6 +20,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements-dev.txt
+            requirements-lambda.txt
 
       - name: Install backend deps
         run: |
@@ -24,6 +32,44 @@ jobs:
 
       - name: Run backend tests (non-integration)
         run: python -m pytest -q -m "not integration"
+
+  backend-integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements-dev.txt
+            requirements-lambda.txt
+
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Download model weights from S3
+        env:
+          MODEL_BUCKET: ${{ vars.MODEL_BUCKET }}
+          MODEL_PREFIX: ${{ vars.MODEL_PREFIX }}
+        run: |
+          if [ -z "$MODEL_BUCKET" ] || [ -z "$MODEL_PREFIX" ]; then
+            echo "::error ::MODEL_BUCKET and MODEL_PREFIX must be set as repository variables."
+            exit 1
+          fi
+          mkdir -p best_models
+          aws s3 sync "s3://${MODEL_BUCKET}/${MODEL_PREFIX}" best_models --delete
 
       - name: Run backend integration tests
         run: python -m pytest -q -m integration
